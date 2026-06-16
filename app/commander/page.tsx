@@ -25,6 +25,7 @@ type ScryfallCard = {
 };
 
 const colors = [
+  { id: "C", symbol: "◇", label: "Incolore" },
   { id: "W", icon: "⚪", label: "Blanc" },
   { id: "U", icon: "🔵", label: "Bleu" },
   { id: "B", icon: "⚫", label: "Noir" },
@@ -51,11 +52,12 @@ export default function CommanderPage() {
       setIsLoading(true);
       setError("");
 
-      const colorQuery =
-        selectedColors.length > 0
-          ? ` id=${selectedColors.sort().join("")}`
-          : "";
-
+const colorQuery =
+  selectedColors.length > 0
+    ? selectedColors.includes("C")
+      ? " id=c"
+      : ` id=${selectedColors.sort().join("")}`
+    : "";
       const query = `type:legendary type:creature legal:commander lang:fr${colorQuery}`;
 
       const response = await fetch(
@@ -99,7 +101,7 @@ export default function CommanderPage() {
 
   return (
     <main className="page h-[100dvh] overflow-hidden">
-      <section className="container-app flex h-full flex-col pb-24">
+      <section className="container-app flex h-full flex-col pb-32">
         <header className="shrink-0">
           <Link href="/" className="text-3xl font-black">
             ←
@@ -121,26 +123,26 @@ export default function CommanderPage() {
             Filtre couleurs
           </p>
 
-          <div className="grid grid-cols-5 gap-2">
-            {colors.map((color) => {
-              const selected = selectedColors.includes(color.id);
+<div className="grid grid-cols-6 gap-2">
+  {colors.map((color) => {
+    const selected = selectedColors.includes(color.id);
 
-              return (
-                <button
-                  key={color.id}
-                  onClick={() => toggleColor(color.id)}
-                  className={`rounded-2xl py-3 text-xl font-black transition ${
-                    selected
-                      ? "border-2 border-accent bg-accent text-white shadow-[0_0_20px_rgba(255,170,80,0.45)]"
-                      : "border border-white/10 bg-white/10 text-white"
-                  }`}
-                  title={color.label}
-                >
-                  {color.icon}
-                </button>
-              );
-            })}
-          </div>
+    return (
+      <button
+        key={color.id}
+        onClick={() => toggleColor(color.id)}
+        className={`flex h-12 items-center justify-center rounded-full text-lg font-black transition ${
+          selected
+            ? "border-2 border-accent bg-accent text-white shadow-[0_0_20px_rgba(255,170,80,0.45)]"
+            : "border border-white/10 bg-white/10 text-white"
+        }`}
+        title={color.label}
+      >
+        {color.symbol}
+      </button>
+    );
+  })}
+</div>
         </div>
 
         <div className="mt-4 flex min-h-0 flex-1 flex-col rounded-[2rem] border border-white/10 bg-black/25 p-4">
@@ -174,7 +176,7 @@ export default function CommanderPage() {
                 </p>
               )}
 
-              <p className="mt-3 max-h-[30vh] overflow-y-auto whitespace-pre-line text-xs leading-5 text-slate-300">
+              <p className="mt-3 max-h-[22vh] overflow-y-auto whitespace-pre-line pr-2 text-xs leading-5 text-slate-300">
                 {text}
               </p>
             </div>
