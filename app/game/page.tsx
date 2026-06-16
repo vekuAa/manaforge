@@ -286,7 +286,10 @@ export default function GamePage() {
       <div className={gridClass}>
         {players.map((player, index) => {
           const isThirdFullWidth = players.length === 3 && index === 2;
-          const isTopPlayerRotated = players.length === 2 && index === 0;
+          const isRotated =
+  (players.length === 2 && index === 0) ||
+  (players.length === 3 && index < 2) ||
+  (players.length === 4 && index < 2);
 
           const commanderKill = Object.values(player.commanderDamage).some(
             (damage) => damage >= 21
@@ -299,9 +302,7 @@ export default function GamePage() {
               onPointerUp={(event) => handleSwipeEnd(player.id, event.clientY)}
               className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${getThemeClasses(
                 tableTheme
-              )} p-2 ${isThirdFullWidth ? "col-span-2" : ""} ${
-                isTopPlayerRotated ? "rotate-180" : ""
-              }`}
+              )} p-2 ${isThirdFullWidth ? "col-span-2" : ""} ${isRotated ? "rotate-180" : ""}`}
             >
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-black/50" />
 
@@ -330,24 +331,24 @@ export default function GamePage() {
                   </button>
                 )}
 
-<div className="flex w-full items-center justify-center gap-10 px-6">
+<div className="flex w-full items-center justify-center gap-3 px-2">
   <button
     onClick={() => updatePlayer(player.id, "life", -1)}
-    className="flex h-24 w-24 items-center justify-center rounded-[2rem] border border-red-500/25 bg-red-500/15 text-5xl font-black text-red-300 shadow-xl"
+    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-3xl font-black text-white"
   >
     −
   </button>
 
   <button
     onClick={() => openSheet(player.id, "markers")}
-    className="min-w-[190px] text-center text-[11rem] font-black leading-none tracking-tight text-white drop-shadow-2xl"
+    className="min-w-[110px] text-center text-[5.5rem] font-black leading-none tracking-tight text-white drop-shadow-2xl"
   >
     {player.life}
   </button>
 
   <button
     onClick={() => updatePlayer(player.id, "life", 1)}
-    className="flex h-24 w-24 items-center justify-center rounded-[2rem] border border-accent/30 bg-accent/20 text-5xl font-black text-accent shadow-xl"
+    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-accent/30 bg-accent/20 text-3xl font-black text-accent"
   >
     +
   </button>
@@ -367,7 +368,7 @@ export default function GamePage() {
               )}
 
               {activePlayerId === player.id && activeSheet === "markers" && (
-                <div className="absolute inset-x-3 bottom-3 z-40 rounded-[2rem] border border-white/10 bg-[#09090d]/95 p-4 shadow-2xl backdrop-blur-xl">
+                <div className="absolute inset-x-2 bottom-2 z-40 max-h-[85%] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-[#09090d]/95 p-3 shadow-2xl backdrop-blur-xl">
                   <PanelHeader title="Marqueurs" onClose={closeSheet} />
 
                   <div className="grid grid-cols-2 gap-3">
@@ -403,7 +404,7 @@ export default function GamePage() {
               )}
 
               {activePlayerId === player.id && activeSheet === "commander" && (
-                <div className="absolute inset-x-3 bottom-3 z-40 rounded-[2rem] border border-white/10 bg-[#09090d]/95 p-4 shadow-2xl backdrop-blur-xl">
+                <div className="absolute inset-x-2 bottom-2 z-40 max-h-[85%] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-[#09090d]/95 p-3 shadow-2xl backdrop-blur-xl">
                   <PanelHeader title="Dégâts commandant" onClose={closeSheet} />
 
                   <div className="space-y-3">
