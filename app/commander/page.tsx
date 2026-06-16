@@ -25,12 +25,12 @@ type ScryfallCard = {
 };
 
 const colors = [
-  { id: "C", symbol: "◇", label: "Incolore" },
-  { id: "W", icon: "⚪", label: "Blanc" },
-  { id: "U", icon: "🔵", label: "Bleu" },
-  { id: "B", icon: "⚫", label: "Noir" },
-  { id: "R", icon: "🔴", label: "Rouge" },
-  { id: "G", icon: "🟢", label: "Vert" },
+  { id: "C", symbol: "◇", label: "Incolore", className: "bg-zinc-300 text-black" },
+  { id: "W", symbol: "☀", label: "Blanc", className: "bg-yellow-100 text-black" },
+  { id: "U", symbol: "💧", label: "Bleu", className: "bg-blue-500 text-white" },
+  { id: "B", symbol: "☠", label: "Noir", className: "bg-zinc-900 text-white" },
+  { id: "R", symbol: "🔥", label: "Rouge", className: "bg-red-500 text-white" },
+  { id: "G", symbol: "🌳", label: "Vert", className: "bg-green-600 text-white" },
 ];
 
 export default function CommanderPage() {
@@ -133,8 +133,8 @@ const colorQuery =
         onClick={() => toggleColor(color.id)}
         className={`flex h-12 items-center justify-center rounded-full text-lg font-black transition ${
           selected
-            ? "border-2 border-accent bg-accent text-white shadow-[0_0_20px_rgba(255,170,80,0.45)]"
-            : "border border-white/10 bg-white/10 text-white"
+  ? `${color.className} border-2 border-accent shadow-[0_0_20px_rgba(255,170,80,0.45)]`
+  : `${color.className} border border-white/20 opacity-70`
         }`}
         title={color.label}
       >
