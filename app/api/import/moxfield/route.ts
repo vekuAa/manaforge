@@ -19,8 +19,8 @@ export async function POST(request: Request) {
       `https://api2.moxfield.com/v2/decks/all/${body.deckId}`,
       {
         headers: {
-          "User-Agent": "Manaforge/1.0",
           Accept: "application/json",
+          "User-Agent": "Manaforge/1.0",
         },
         cache: "no-store",
       }
@@ -28,7 +28,10 @@ export async function POST(request: Request) {
 
     if (!response.ok) {
       return NextResponse.json(
-        { error: "Deck Moxfield introuvable ou privé" },
+        {
+          error: "Deck Moxfield introuvable ou temporairement bloqué",
+          status: response.status,
+        },
         { status: response.status }
       );
     }
