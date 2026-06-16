@@ -39,13 +39,52 @@ export default function CollectionPage() {
   const [quantity, setQuantity] = useState(1);
   const [selectedFolder, setSelectedFolder] = useState("Toutes");
   const [newFolder, setNewFolder] = useState("");
-
+const [viewMode, setViewMode] =
+  useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("Toutes");
   const [setFilter, setSetFilter] = useState("Toutes");
 
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+const [isSearching, setIsSearching] = useState(false);
+
+useEffect(() => {
+  const query = cardName.trim();
+
+  if (query.length < 2) {
+    setSuggestions([]);
+    return;
+  }
+
+  const timeout = setTimeout(async () => {
+    try {
+      setIsSearching(true);
+
+      const response = await fetch(
+        `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(
+          query
+        )}`
+      );
+
+      if (!response.ok) {
+        setSuggestions([]);
+        return;
+      }
+
+      const data = await response.json();
+
+      setSuggestions(data.data ?? []);
+    } catch {
+      setSuggestions([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }, 250);
+
+  return () => clearTimeout(timeout);
+}, [cardName]);
 
   useEffect(() => {
     try {
@@ -239,6 +278,41 @@ export default function CollectionPage() {
               Collection
             </h1>
 
+            <div className="mt-6 grid grid-cols-2 gap-3">
+  {folders
+    .filter((folder) => folder !== "Toutes")
+    .map((folder) => {
+      const folderCards = cards.filter(
+        (card) => card.folder === folder
+      );
+
+      const folderValue = folderCards.reduce(
+        (sum, card) => sum + card.price * card.quantity,
+        0
+      );
+
+      return (
+        <button
+          key={folder}
+          onClick={() => setFolderFilter(folder)}
+          className="card-soft p-4 text-left"
+        >
+          <div className="text-3xl">📁</div>
+
+          <p className="mt-2 font-black">{folder}</p>
+
+          <p className="text-sm text-muted">
+            {folderCards.length} cartes
+          </p>
+
+          <p className="text-sm font-bold text-accent">
+            {folderValue.toFixed(2)}€
+          </p>
+        </button>
+      );
+    })}
+</div>
+
             <p className="mt-2 text-muted">
               Cartes, dossiers, extensions et valeur estimée.
             </p>
@@ -250,17 +324,55 @@ export default function CollectionPage() {
           <StatCard label="Uniques" value={stats.uniqueCards} />
           <StatCard label="Valeur" value={`${stats.totalValue}€`} />
         </div>
+<div className="mt-4 flex gap-2">
+  <button
+    onClick={() => setViewMode("grid")}
+    className={`btn-soft ${
+      viewMode === "grid" ? "border-accent bg-accent/10" : ""
+    }`}
+  >
+    🖼️ Grille
+  </button>
 
+  <button
+    onClick={() => setViewMode("list")}
+    className={`btn-soft ${
+      viewMode === "list" ? "border-accent bg-accent/10" : ""
+    }`}
+  >
+    📋 Liste
+  </button>
+</div>
         <div className="mt-6 card-premium p-5">
           <h2 className="text-xl font-black">Ajouter une carte</h2>
 
           <div className="mt-5 space-y-3">
-            <input
-              value={cardName}
-              onChange={(event) => setCardName(event.target.value)}
-              placeholder="Sol Ring, Atraxa, Cyclonic Rift..."
-              className="input-premium"
-            />
+<div className="relative">
+  <input
+    value={cardName}
+    onChange={(event) => setCardName(event.target.value)}
+    placeholder="Sol Ring, Atraxa..."
+    className="input-premium"
+  />
+
+  {(suggestions.length > 0 || isSearching) && (
+    <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#09090d] shadow-2xl">
+      {suggestions.map((suggestion: string) => (
+        <button
+          key={suggestion}
+          type="button"
+          onClick={() => {
+            setCardName(suggestion);
+            setSuggestions([]);
+          }}
+          className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10"
+        >
+          {suggestion}
+        </button>
+      ))}
+    </div>
+  )}
+</div>
 
             <div className="grid grid-cols-[1fr_auto] gap-3">
               <input
@@ -352,7 +464,13 @@ export default function CollectionPage() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3">
+        <div
+  className={
+    viewMode === "grid"
+      ? "mt-5 grid grid-cols-2 gap-3"
+      : "mt-5 grid gap-3"
+  }
+>
           {filteredCards.length === 0 ? (
             <div className="card-soft p-5 text-center text-muted">
               Aucune carte trouvée.
