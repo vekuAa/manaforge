@@ -13,11 +13,18 @@ type CollectionCard = {
   quantity: number;
   price: number;
   typeLine?: string;
+  setName?: string;
+  setCode?: string;
+  rarity?: string;
+  folder?: string;
 };
 
 type ScryfallCard = {
   name: string;
   type_line?: string;
+  set_name?: string;
+  set?: string;
+  rarity?: string;
   image_uris?: { normal?: string };
   card_faces?: { image_uris?: { normal?: string } }[];
   prices?: { eur?: string | null; usd?: string | null };
@@ -25,17 +32,31 @@ type ScryfallCard = {
 
 export default function CollectionPage() {
   const [cards, setCards] = useState<CollectionCard[]>([]);
+  const [folders, setFolders] = useState<string[]>(["Toutes", "Commander", "Trade", "Staples"]);
   const [hasLoaded, setHasLoaded] = useState(false);
+
   const [cardName, setCardName] = useState("");
   const [quantity, setQuantity] = useState(1);
+  const [selectedFolder, setSelectedFolder] = useState("Toutes");
+  const [newFolder, setNewFolder] = useState("");
+
   const [search, setSearch] = useState("");
+  const [folderFilter, setFolderFilter] = useState("Toutes");
+  const [setFilter, setSetFilter] = useState("Toutes");
+
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("manaforge-collection");
-      setCards(saved ? (JSON.parse(saved) as CollectionCard[]) : []);
+      const savedCards = localStorage.getItem("manaforge-collection");
+      const savedFolders = localStorage.getItem("manaforge-folders");
+
+      setCards(savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : []);
+
+      if (savedFolders) {
+        setFolders(JSON.parse(savedFolders) as string[]);
+      }
     } catch {
       setCards([]);
     } finally {
@@ -45,13 +66,33 @@ export default function CollectionPage() {
 
   useEffect(() => {
     if (!hasLoaded) return;
+
     localStorage.setItem("manaforge-collection", JSON.stringify(cards));
-  }, [cards, hasLoaded]);
+    localStorage.setItem("manaforge-folders", JSON.stringify(folders));
+  }, [cards, folders, hasLoaded]);
+
+  const extensions = useMemo(() => {
+    const values = cards
+      .map((card) => card.setName)
+      .filter((value): value is string => Boolean(value));
+
+    return ["Toutes", ...Array.from(new Set(values)).sort()];
+  }, [cards]);
+
+  const filteredCards = useMemo(() => {
+    return cards.filter((card) => {
+      const matchesSearch = card.name.toLowerCase().includes(search.toLowerCase());
+      const matchesFolder = folderFilter === "Toutes" || card.folder === folderFilter;
+      const matchesSet = setFilter === "Toutes" || card.setName === setFilter;
+
+      return matchesSearch && matchesFolder && matchesSet;
+    });
+  }, [cards, search, folderFilter, setFilter]);
 
   const stats = useMemo(() => {
-    const totalCards = cards.reduce((sum, card) => sum + card.quantity, 0);
-    const uniqueCards = cards.length;
-    const totalValue = cards.reduce(
+    const totalCards = filteredCards.reduce((sum, card) => sum + card.quantity, 0);
+    const uniqueCards = filteredCards.length;
+    const totalValue = filteredCards.reduce(
       (sum, card) => sum + card.quantity * card.price,
       0
     );
@@ -61,11 +102,21 @@ export default function CollectionPage() {
       uniqueCards,
       totalValue: Math.round(totalValue * 100) / 100,
     };
-  }, [cards]);
+  }, [filteredCards]);
 
-  const filteredCards = cards.filter((card) =>
-    card.name.toLowerCase().includes(search.toLowerCase())
-  );
+  function createFolder() {
+    const cleanFolder = newFolder.trim();
+
+    if (!cleanFolder) return;
+    if (folders.includes(cleanFolder)) {
+      setNewFolder("");
+      return;
+    }
+
+    setFolders((current) => [...current, cleanFolder]);
+    setSelectedFolder(cleanFolder);
+    setNewFolder("");
+  }
 
   async function addCard() {
     const cleanName = cardName.trim();
@@ -80,9 +131,7 @@ export default function CollectionPage() {
       setError("");
 
       const response = await fetch(
-        `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(
-          cleanName
-        )}`
+        `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(cleanName)}`
       );
 
       if (!response.ok) {
@@ -97,10 +146,14 @@ export default function CollectionPage() {
         "";
 
       const price = Number(data.prices?.eur || data.prices?.usd || 0);
+      const folder = selectedFolder === "Toutes" ? "Non classé" : selectedFolder;
 
       setCards((current) => {
         const existing = current.find(
-          (card) => card.name.toLowerCase() === data.name.toLowerCase()
+          (card) =>
+            card.name.toLowerCase() === data.name.toLowerCase() &&
+            card.setCode === data.set &&
+            card.folder === folder
         );
 
         if (existing) {
@@ -120,6 +173,10 @@ export default function CollectionPage() {
             quantity,
             price,
             typeLine: data.type_line || "",
+            setName: data.set_name || "Extension inconnue",
+            setCode: data.set || "",
+            rarity: data.rarity || "unknown",
+            folder,
           },
         ];
       });
@@ -127,9 +184,7 @@ export default function CollectionPage() {
       setCardName("");
       setQuantity(1);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Erreur pendant l’ajout."
-      );
+      setError(err instanceof Error ? err.message : "Erreur pendant l’ajout.");
     } finally {
       setIsAdding(false);
     }
@@ -144,6 +199,12 @@ export default function CollectionPage() {
             : card
         )
         .filter((card) => card.quantity > 0)
+    );
+  }
+
+  function updateCardFolder(id: number, folder: string) {
+    setCards((current) =>
+      current.map((card) => (card.id === id ? { ...card, folder } : card))
     );
   }
 
@@ -179,7 +240,7 @@ export default function CollectionPage() {
             </h1>
 
             <p className="mt-2 text-muted">
-              Suis tes cartes, quantités et valeur estimée.
+              Cartes, dossiers, extensions et valeur estimée.
             </p>
           </div>
         </header>
@@ -221,6 +282,31 @@ export default function CollectionPage() {
               </button>
             </div>
 
+            <select
+              value={selectedFolder}
+              onChange={(event) => setSelectedFolder(event.target.value)}
+              className="input-premium"
+            >
+              {folders.map((folder) => (
+                <option key={folder} value={folder}>
+                  {folder}
+                </option>
+              ))}
+            </select>
+
+            <div className="grid grid-cols-[1fr_auto] gap-3">
+              <input
+                value={newFolder}
+                onChange={(event) => setNewFolder(event.target.value)}
+                placeholder="Créer un dossier"
+                className="input-premium"
+              />
+
+              <button onClick={createFolder} className="btn-soft px-5">
+                +
+              </button>
+            </div>
+
             {error && (
               <p className="rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">
                 {error}
@@ -229,19 +315,47 @@ export default function CollectionPage() {
           </div>
         </div>
 
-        <div className="mt-6">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Rechercher dans la collection"
-            className="input-premium"
-          />
+        <div className="mt-6 card-soft p-4">
+          <div className="space-y-3">
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Rechercher une carte"
+              className="input-premium"
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <select
+                value={folderFilter}
+                onChange={(event) => setFolderFilter(event.target.value)}
+                className="input-premium"
+              >
+                {folders.map((folder) => (
+                  <option key={folder} value={folder}>
+                    {folder}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={setFilter}
+                onChange={(event) => setSetFilter(event.target.value)}
+                className="input-premium"
+              >
+                {extensions.map((extension) => (
+                  <option key={extension} value={extension}>
+                    {extension}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 grid gap-3">
           {filteredCards.length === 0 ? (
             <div className="card-soft p-5 text-center text-muted">
-              Aucune carte dans ta collection.
+              Aucune carte trouvée.
             </div>
           ) : (
             filteredCards.map((card) => (
@@ -251,10 +365,10 @@ export default function CollectionPage() {
                     <img
                       src={card.image}
                       alt={card.name}
-                      className="h-24 w-16 rounded-xl object-cover"
+                      className="h-28 w-20 rounded-xl object-cover"
                     />
                   ) : (
-                    <div className="flex h-24 w-16 items-center justify-center rounded-xl bg-black/30 text-2xl">
+                    <div className="flex h-28 w-20 items-center justify-center rounded-xl bg-black/30 text-2xl">
                       🎴
                     </div>
                   )}
@@ -267,6 +381,18 @@ export default function CollectionPage() {
                     <p className="mt-1 line-clamp-1 text-xs text-muted">
                       {card.typeLine}
                     </p>
+
+                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-muted">
+                      <span className="rounded-full bg-white/10 px-2 py-1">
+                        {card.setName}
+                      </span>
+                      <span className="rounded-full bg-white/10 px-2 py-1">
+                        {card.rarity}
+                      </span>
+                      <span className="rounded-full bg-white/10 px-2 py-1">
+                        {card.folder}
+                      </span>
+                    </div>
 
                     <p className="mt-2 text-sm font-bold text-accent">
                       {card.price}€ / carte ·{" "}
@@ -301,6 +427,22 @@ export default function CollectionPage() {
                         Supprimer
                       </button>
                     </div>
+
+                    <select
+                      value={card.folder || "Non classé"}
+                      onChange={(event) =>
+                        updateCardFolder(card.id, event.target.value)
+                      }
+                      className="input-premium mt-3"
+                    >
+                      {folders
+                        .filter((folder) => folder !== "Toutes")
+                        .map((folder) => (
+                          <option key={folder} value={folder}>
+                            {folder}
+                          </option>
+                        ))}
+                    </select>
                   </div>
                 </div>
               </div>
