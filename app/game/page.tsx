@@ -39,7 +39,6 @@ export default function GamePage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [activePlayerId, setActivePlayerId] = useState<number | null>(null);
   const [activeSheet, setActiveSheet] = useState<SheetType>(null);
-  const [pointerStartY, setPointerStartY] = useState<number | null>(null);
 
   function getThemeClasses(theme: TableTheme) {
     switch (theme) {
@@ -139,23 +138,12 @@ export default function GamePage() {
     );
   }
 
-  function handleSwipeEnd(playerId: number, endY: number) {
-    if (pointerStartY === null) return;
-
-    const diff = pointerStartY - endY;
-
-    if (diff > 50) openSheet(playerId, "markers");
-    if (diff < -50) closeSheet();
-
-    setPointerStartY(null);
-  }
-
-const gridClass =
-  players.length === 2
-    ? "grid h-[100dvh] grid-rows-2"
-    : players.length === 3
-    ? "grid h-[100dvh] grid-cols-2 grid-rows-2"
-    : "grid h-[100dvh] grid-cols-2 grid-rows-3";
+  const gridClass =
+    players.length === 2
+      ? "grid h-[100dvh] grid-rows-2"
+      : players.length === 3
+      ? "grid h-[100dvh] grid-cols-2 grid-rows-2"
+      : "grid h-[100dvh] grid-cols-2 grid-rows-2";
 
   if (!gameStarted) {
     return (
@@ -190,29 +178,29 @@ const gridClass =
               </p>
 
               <div className="grid grid-cols-3 gap-3">
-{[2, 3, 4].map((count) => {
-  const selected = playerCount === count;
+                {[2, 3, 4].map((count) => {
+                  const selected = playerCount === count;
 
-  return (
-    <button
-      key={count}
-      onClick={() => setPlayerCount(count)}
-      className={`relative rounded-2xl py-5 text-2xl font-black transition ${
-        selected
-  ? "bg-gradient-to-br from-orange-400 to-orange-600 text-white border border-orange-300 shadow-[0_0_25px_rgba(255,170,80,0.5)]"
-  : "bg-white/10 text-white border border-white/10"
-      }`}
-    >
-      {selected && (
-        <span className="absolute right-3 top-3 text-sm font-black">
-          ✓
-        </span>
-      )}
+                  return (
+                    <button
+                      key={count}
+                      onClick={() => setPlayerCount(count)}
+                      className={`relative rounded-2xl py-5 text-2xl font-black transition ${
+                        selected
+                          ? "border-2 border-accent bg-accent text-white shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+                          : "border border-white/10 bg-white/10 text-white"
+                      }`}
+                    >
+                      {selected && (
+                        <span className="absolute right-3 top-3 text-sm font-black text-white">
+                          ✓
+                        </span>
+                      )}
 
-      {count}
-    </button>
-  );
-})}
+                      {count}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -222,27 +210,32 @@ const gridClass =
               </p>
 
               <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setGameMode("commander")}
-                  className={`rounded-2xl py-5 font-black transition ${
-                    gameMode === "commander"
-  ? "bg-gradient-to-br from-orange-400 to-orange-600 text-white border border-orange-300 shadow-[0_0_25px_rgba(255,170,80,0.5)]"
-  : "bg-white/10 text-white border border-white/10"
-                  }`}
-                >
-                  Commander
-                </button>
+                {[
+                  { id: "commander", label: "🎴 Commander" },
+                  { id: "standard", label: "⚔️ 60 cartes" },
+                ].map((mode) => {
+                  const selected = gameMode === mode.id;
 
-                <button
-                  onClick={() => setGameMode("standard")}
-                  className={`rounded-2xl py-5 font-black transition ${
-                    gameMode === "standard"
-                      ? "bg-accent text-black"
-                      : "bg-white/10 text-white"
-                  }`}
-                >
-                  60 cartes
-                </button>
+                  return (
+                    <button
+                      key={mode.id}
+                      onClick={() => setGameMode(mode.id as GameMode)}
+                      className={`relative rounded-2xl py-5 font-black transition ${
+                        selected
+                          ? "border-2 border-accent bg-accent text-white shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+                          : "border border-white/10 bg-white/10 text-white"
+                      }`}
+                    >
+                      {selected && (
+                        <span className="absolute right-3 top-3 text-sm font-black text-white">
+                          ✓
+                        </span>
+                      )}
+
+                      {mode.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -252,35 +245,35 @@ const gridClass =
               </p>
 
               <div className="grid grid-cols-2 gap-3">
-{[
-  { id: "manaforge", label: "⚡ Manaforge" },
-  { id: "fire", label: "🔥 Feu" },
-  { id: "ice", label: "❄️ Glace" },
-  { id: "toxic", label: "☠️ Toxique" },
-  { id: "royal", label: "👑 Royal" },
-].map((theme) => {
-  const selected = tableTheme === theme.id;
+                {[
+                  { id: "manaforge", label: "⚡ Manaforge" },
+                  { id: "fire", label: "🔥 Feu" },
+                  { id: "ice", label: "❄️ Glace" },
+                  { id: "toxic", label: "☠️ Toxique" },
+                  { id: "royal", label: "👑 Royal" },
+                ].map((theme) => {
+                  const selected = tableTheme === theme.id;
 
-  return (
-    <button
-      key={theme.id}
-      onClick={() => setTableTheme(theme.id as TableTheme)}
-      className={`relative rounded-2xl py-4 font-black transition ${
-  selected
-  ? "bg-gradient-to-br from-orange-400 to-orange-600 text-white border border-orange-300 shadow-[0_0_25px_rgba(255,170,80,0.5)]"
-  : "bg-white/10 text-white border border-white/10"
-      }`}
-    >
-      {selected && (
-        <span className="absolute right-3 top-3 text-sm">
-          ✓
-        </span>
-      )}
+                  return (
+                    <button
+                      key={theme.id}
+                      onClick={() => setTableTheme(theme.id as TableTheme)}
+                      className={`relative rounded-2xl py-4 font-black transition ${
+                        selected
+                          ? "border-2 border-accent bg-accent text-white shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+                          : "border border-white/10 bg-white/10 text-white"
+                      }`}
+                    >
+                      {selected && (
+                        <span className="absolute right-3 top-3 text-sm font-black text-white">
+                          ✓
+                        </span>
+                      )}
 
-      {theme.label}
-    </button>
-  );
-})}
+                      {theme.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -308,11 +301,7 @@ const gridClass =
       <div className={gridClass}>
         {players.map((player, index) => {
           const isThirdFullWidth = players.length === 3 && index === 2;
-          const isRotated =
-  (players.length === 2 && index === 0) ||
-  (players.length === 3 && index < 2) ||
-  (players.length === 4 && index < 2);
-const contentRotation = isRotated ? "rotate-180" : "";
+
           const commanderKill = Object.values(player.commanderDamage).some(
             (damage) => damage >= 21
           );
@@ -320,27 +309,13 @@ const contentRotation = isRotated ? "rotate-180" : "";
           return (
             <section
               key={player.id}
-onTouchStart={(event) => {
-  setPointerStartY(event.touches[0].clientY);
-}}
-onTouchEnd={(event) => {
-  handleSwipeEnd(player.id, event.changedTouches[0].clientY);
-}}
-onMouseDown={(event) => {
-  setPointerStartY(event.clientY);
-}}
-onMouseUp={(event) => {
-  handleSwipeEnd(player.id, event.clientY);
-}}
-className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${getThemeClasses(
-  tableTheme
-)} p-2 ${isThirdFullWidth ? "col-span-2" : ""}`}
+              className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${getThemeClasses(
+                tableTheme
+              )} p-2 ${isThirdFullWidth ? "col-span-2" : ""}`}
             >
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-black/50" />
 
-             <div
-  className={`relative z-10 flex h-full flex-col items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-2xl backdrop-blur-sm ${contentRotation}`}
->
+              <div className="relative z-10 flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-2 shadow-2xl backdrop-blur-sm">
                 <input
                   value={player.name}
                   onChange={(event) =>
@@ -352,57 +327,59 @@ className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${
                       )
                     )
                   }
-                  className="absolute top-5 w-full bg-transparent text-center text-xs font-black uppercase tracking-[0.24em] text-white/70 outline-none"
+                  className="absolute top-3 w-full bg-transparent px-14 text-center text-xs font-black uppercase tracking-[0.18em] text-white/70 outline-none"
                 />
+
+                <button
+                  onClick={() => openSheet(player.id, "markers")}
+                  className="absolute left-3 top-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-xl font-black"
+                  aria-label="Marqueurs"
+                >
+                  ⋮
+                </button>
 
                 {gameMode === "commander" && (
                   <button
                     onClick={() => openSheet(player.id, "commander")}
-                    className="absolute right-4 top-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-accent/30 bg-accent/10 text-2xl shadow-lg"
+                    className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-accent/30 bg-accent/10 text-xl shadow-lg"
                     aria-label="Dégâts commandant"
                   >
                     🛡️
                   </button>
                 )}
 
-<div className="flex w-full items-center justify-center gap-3 px-2">
-  <button
-    onClick={() => updatePlayer(player.id, "life", -1)}
-    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-3xl font-black text-white"
-  >
-    −
-  </button>
+                <button
+                  onClick={() => openSheet(player.id, "markers")}
+                  className="text-center text-[5.8rem] font-black leading-none tracking-tight text-white drop-shadow-2xl"
+                >
+                  {player.life}
+                </button>
 
-  <button
-    onClick={() => openSheet(player.id, "markers")}
-    className="min-w-[110px] text-center text-[5.5rem] font-black leading-none tracking-tight text-white drop-shadow-2xl"
-  >
-    {player.life}
-  </button>
+                <div className="mt-3 flex w-full items-center justify-center gap-5 px-3">
+                  <button
+                    onClick={() => updatePlayer(player.id, "life", -1)}
+                    className="flex h-16 min-w-[96px] items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-4xl font-black text-white"
+                  >
+                    −
+                  </button>
 
-  <button
-    onClick={() => updatePlayer(player.id, "life", 1)}
-    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-accent/30 bg-accent/20 text-3xl font-black text-accent"
-  >
-    +
-  </button>
-</div>
-
-                <div className="absolute bottom-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/35">
-                  <span>Swipe up</span>
-                  <span>•</span>
-                  <span>Marqueurs</span>
+                  <button
+                    onClick={() => updatePlayer(player.id, "life", 1)}
+                    className="flex h-16 min-w-[96px] items-center justify-center rounded-2xl border border-accent/40 bg-accent/20 text-4xl font-black text-accent"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
 
               {(player.life <= 0 || commanderKill) && (
-                <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 px-4 text-center text-2xl font-black text-red-300 backdrop-blur-sm">
+                <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 px-4 text-center text-xl font-black text-red-300 backdrop-blur-sm">
                   {getDeathMessage(player.name, commanderKill)}
                 </div>
               )}
 
               {activePlayerId === player.id && activeSheet === "markers" && (
-                <div className="absolute inset-x-2 bottom-2 z-40 max-h-[85%] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-[#09090d]/95 p-3 shadow-2xl backdrop-blur-xl">
+                <PlayerPanel>
                   <PanelHeader title="Marqueurs" onClose={closeSheet} />
 
                   <div className="grid grid-cols-2 gap-3">
@@ -434,11 +411,11 @@ className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${
                       onPlus={() => updatePlayer(player.id, "experience", 1)}
                     />
                   </div>
-                </div>
+                </PlayerPanel>
               )}
 
               {activePlayerId === player.id && activeSheet === "commander" && (
-                <div className="absolute inset-x-2 bottom-2 z-40 max-h-[85%] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-[#09090d]/95 p-3 shadow-2xl backdrop-blur-xl">
+                <PlayerPanel>
                   <PanelHeader title="Dégâts commandant" onClose={closeSheet} />
 
                   <div className="space-y-3">
@@ -451,13 +428,13 @@ className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${
                         return (
                           <div
                             key={opponent.id}
-                            className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.06] p-3"
+                            className="rounded-2xl border border-white/10 bg-white/[0.06] p-3"
                           >
-                            <span className="text-sm font-black">
+                            <p className="mb-3 text-center text-sm font-black">
                               {opponent.name}
-                            </span>
+                            </p>
 
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center justify-center gap-4">
                               <button
                                 onClick={() =>
                                   updateCommanderDamage(
@@ -466,13 +443,13 @@ className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${
                                     -1
                                   )
                                 }
-                                className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-2xl font-black text-white"
+                                className="flex h-12 min-w-[76px] items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-2xl font-black text-white"
                               >
                                 −
                               </button>
 
                               <span
-                                className={`w-10 text-center text-2xl font-black ${
+                                className={`min-w-[48px] text-center text-3xl font-black ${
                                   damage >= 21
                                     ? "text-red-400"
                                     : "text-white"
@@ -489,7 +466,7 @@ className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${
                                     1
                                   )
                                 }
-                                className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-2xl font-black text-black"
+                                className="flex h-12 min-w-[76px] items-center justify-center rounded-2xl border border-accent/40 bg-accent/20 text-2xl font-black text-accent"
                               >
                                 +
                               </button>
@@ -498,13 +475,21 @@ className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${
                         );
                       })}
                   </div>
-                </div>
+                </PlayerPanel>
               )}
             </section>
           );
         })}
       </div>
     </main>
+  );
+}
+
+function PlayerPanel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="absolute inset-x-2 bottom-2 z-40 max-h-[92%] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-[#09090d]/95 p-3 shadow-2xl backdrop-blur-xl">
+      {children}
+    </div>
   );
 }
 
@@ -552,22 +537,22 @@ function MarkerButton({
         {label}
       </p>
 
-      <div className="flex items-center justify-center gap-6">
-<button
-  onClick={onMinus}
-  className="flex h-16 w-16 items-center justify-center rounded-3xl border border-red-500/20 bg-red-500/10 text-3xl font-black text-red-300 shadow-lg"
->
+      <div className="flex items-center justify-center gap-3">
+        <button
+          onClick={onMinus}
+          className="flex h-11 min-w-[56px] items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-2xl font-black text-white"
+        >
           −
         </button>
 
-        <span className="min-w-[50px] text-center text-5xl font-black">
+        <span className="min-w-[34px] text-center text-2xl font-black">
           {value}
         </span>
 
- <button
-  onClick={onPlus}
-  className="flex h-16 w-16 items-center justify-center rounded-3xl border border-accent/30 bg-accent/15 text-3xl font-black text-accent shadow-lg"
->
+        <button
+          onClick={onPlus}
+          className="flex h-11 min-w-[56px] items-center justify-center rounded-2xl border border-accent/40 bg-accent/20 text-2xl font-black text-accent"
+        >
           +
         </button>
       </div>
