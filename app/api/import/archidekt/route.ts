@@ -9,14 +9,11 @@ export async function POST(request: Request) {
     const body = (await request.json()) as ImportBody;
 
     if (!body.deckId) {
-      return NextResponse.json(
-        { error: "deckId manquant" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "deckId manquant" }, { status: 400 });
     }
 
     const response = await fetch(
-      `https://api2.moxfield.com/v2/decks/all/${body.deckId}`,
+      `https://archidekt.com/api/decks/${body.deckId}/`,
       {
         headers: {
           Accept: "application/json",
@@ -29,7 +26,7 @@ export async function POST(request: Request) {
     if (!response.ok) {
       return NextResponse.json(
         {
-          error: "Deck Moxfield introuvable ou temporairement bloqué",
+          error: "Deck Archidekt introuvable ou inaccessible",
           status: response.status,
         },
         { status: response.status }
@@ -41,7 +38,7 @@ export async function POST(request: Request) {
     return NextResponse.json(data);
   } catch {
     return NextResponse.json(
-      { error: "Erreur serveur pendant l'import Moxfield" },
+      { error: "Erreur serveur pendant l'import Archidekt" },
       { status: 500 }
     );
   }
