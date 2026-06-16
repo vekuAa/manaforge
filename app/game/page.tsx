@@ -197,8 +197,8 @@ export default function GamePage() {
       onClick={() => setPlayerCount(count)}
       className={`relative rounded-2xl py-5 text-2xl font-black transition ${
         selected
-          ? "bg-accent text-black border-2 border-accent shadow-[0_0_25px_rgba(255,170,80,0.5)]"
-          : "bg-white/10 text-white border border-white/10"
+  ? "bg-gradient-to-br from-orange-400 to-orange-600 text-white border border-orange-300 shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+  : "bg-white/10 text-white border border-white/10"
       }`}
     >
       {selected && (
@@ -224,7 +224,7 @@ export default function GamePage() {
                   onClick={() => setGameMode("commander")}
                   className={`rounded-2xl py-5 font-black transition ${
                     gameMode === "commander"
-  ? "bg-accent text-black border-2 border-accent shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+  ? "bg-gradient-to-br from-orange-400 to-orange-600 text-white border border-orange-300 shadow-[0_0_25px_rgba(255,170,80,0.5)]"
   : "bg-white/10 text-white border border-white/10"
                   }`}
                 >
@@ -264,9 +264,9 @@ export default function GamePage() {
       key={theme.id}
       onClick={() => setTableTheme(theme.id as TableTheme)}
       className={`relative rounded-2xl py-4 font-black transition ${
-        selected
-          ? "bg-accent text-black border-2 border-accent shadow-[0_0_25px_rgba(255,170,80,0.5)]"
-          : "bg-white/10 text-white border border-white/10"
+  selected
+  ? "bg-gradient-to-br from-orange-400 to-orange-600 text-white border border-orange-300 shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+  : "bg-white/10 text-white border border-white/10"
       }`}
     >
       {selected && (
