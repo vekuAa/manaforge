@@ -188,19 +188,29 @@ export default function GamePage() {
               </p>
 
               <div className="grid grid-cols-3 gap-3">
-                {[2, 3, 4].map((count) => (
-                  <button
-                    key={count}
-                    onClick={() => setPlayerCount(count)}
-                    className={`rounded-2xl py-5 text-2xl font-black transition ${
-                      playerCount === count
-                        ? "bg-accent text-black"
-                        : "bg-white/10 text-white"
-                    }`}
-                  >
-                    {count}
-                  </button>
-                ))}
+{[2, 3, 4].map((count) => {
+  const selected = playerCount === count;
+
+  return (
+    <button
+      key={count}
+      onClick={() => setPlayerCount(count)}
+      className={`relative rounded-2xl py-5 text-2xl font-black transition ${
+        selected
+          ? "bg-accent text-black border-2 border-accent shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+          : "bg-white/10 text-white border border-white/10"
+      }`}
+    >
+      {selected && (
+        <span className="absolute right-3 top-3 text-sm font-black">
+          ✓
+        </span>
+      )}
+
+      {count}
+    </button>
+  );
+})}
               </div>
             </div>
 
@@ -214,8 +224,8 @@ export default function GamePage() {
                   onClick={() => setGameMode("commander")}
                   className={`rounded-2xl py-5 font-black transition ${
                     gameMode === "commander"
-                      ? "bg-accent text-black"
-                      : "bg-white/10 text-white"
+  ? "bg-accent text-black border-2 border-accent shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+  : "bg-white/10 text-white border border-white/10"
                   }`}
                 >
                   Commander
@@ -240,25 +250,35 @@ export default function GamePage() {
               </p>
 
               <div className="grid grid-cols-2 gap-3">
-                {[
-                  { id: "manaforge", label: "Manaforge" },
-                  { id: "fire", label: "Feu" },
-                  { id: "ice", label: "Glace" },
-                  { id: "toxic", label: "Toxique" },
-                  { id: "royal", label: "Royal" },
-                ].map((theme) => (
-                  <button
-                    key={theme.id}
-                    onClick={() => setTableTheme(theme.id as TableTheme)}
-                    className={`rounded-2xl py-4 font-black transition ${
-                      tableTheme === theme.id
-                        ? "bg-accent text-black"
-                        : "bg-white/10 text-white"
-                    }`}
-                  >
-                    {theme.label}
-                  </button>
-                ))}
+{[
+  { id: "manaforge", label: "⚡ Manaforge" },
+  { id: "fire", label: "🔥 Feu" },
+  { id: "ice", label: "❄️ Glace" },
+  { id: "toxic", label: "☠️ Toxique" },
+  { id: "royal", label: "👑 Royal" },
+].map((theme) => {
+  const selected = tableTheme === theme.id;
+
+  return (
+    <button
+      key={theme.id}
+      onClick={() => setTableTheme(theme.id as TableTheme)}
+      className={`relative rounded-2xl py-4 font-black transition ${
+        selected
+          ? "bg-accent text-black border-2 border-accent shadow-[0_0_25px_rgba(255,170,80,0.5)]"
+          : "bg-white/10 text-white border border-white/10"
+      }`}
+    >
+      {selected && (
+        <span className="absolute right-3 top-3 text-sm">
+          ✓
+        </span>
+      )}
+
+      {theme.label}
+    </button>
+  );
+})}
               </div>
             </div>
 
