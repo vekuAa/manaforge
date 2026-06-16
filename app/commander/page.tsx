@@ -25,14 +25,37 @@ type ScryfallCard = {
 };
 
 const colors = [
-  { id: "C", symbol: "◇", label: "Incolore", className: "bg-zinc-300 text-black" },
-  { id: "W", symbol: "☀", label: "Blanc", className: "bg-yellow-100 text-black" },
-  { id: "U", symbol: "💧", label: "Bleu", className: "bg-blue-500 text-white" },
-  { id: "B", symbol: "☠", label: "Noir", className: "bg-zinc-900 text-white" },
-  { id: "R", symbol: "🔥", label: "Rouge", className: "bg-red-500 text-white" },
-  { id: "G", symbol: "🌳", label: "Vert", className: "bg-green-600 text-white" },
+  {
+    id: "W",
+    label: "Blanc",
+    icon: "https://svgs.scryfall.io/card-symbols/W.svg",
+  },
+  {
+    id: "U",
+    label: "Bleu",
+    icon: "https://svgs.scryfall.io/card-symbols/U.svg",
+  },
+  {
+    id: "B",
+    label: "Noir",
+    icon: "https://svgs.scryfall.io/card-symbols/B.svg",
+  },
+  {
+    id: "R",
+    label: "Rouge",
+    icon: "https://svgs.scryfall.io/card-symbols/R.svg",
+  },
+  {
+    id: "G",
+    label: "Vert",
+    icon: "https://svgs.scryfall.io/card-symbols/G.svg",
+  },
+  {
+    id: "C",
+    label: "Incolore",
+    icon: "https://svgs.scryfall.io/card-symbols/C.svg",
+  },
 ];
-
 export default function CommanderPage() {
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [card, setCard] = useState<ScryfallCard | null>(null);
@@ -131,14 +154,22 @@ const colorQuery =
       <button
         key={color.id}
         onClick={() => toggleColor(color.id)}
-        className={`flex h-12 items-center justify-center rounded-full text-lg font-black transition ${
-          selected
-  ? `${color.className} border-2 border-accent shadow-[0_0_20px_rgba(255,170,80,0.45)]`
-  : `${color.className} border border-white/20 opacity-70`
-        }`}
         title={color.label}
+        className={`flex h-14 items-center justify-center rounded-full border transition ${
+          selected
+            ? "border-accent bg-accent/15 shadow-[0_0_20px_rgba(255,170,80,0.45)]"
+            : "border-white/10 bg-white/5"
+        }`}
       >
-        {color.symbol}
+<img
+  src={color.icon}
+  alt={color.label}
+  className={`transition ${
+    selected
+      ? "h-10 w-10 scale-110"
+      : "h-8 w-8 opacity-80"
+  }`}
+/>
       </button>
     );
   })}
