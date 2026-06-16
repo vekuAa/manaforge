@@ -36,6 +36,10 @@ type MoxfieldCardEntry = {
   name?: string;
 };
 
+type ScryfallAutocompleteResponse = {
+  data?: string[];
+};
+
 const colorIcons: Record<string, string> = {
   W: "⚪",
   U: "🔵",
@@ -51,6 +55,9 @@ export default function DecksPage() {
 
   const [newDeckName, setNewDeckName] = useState("");
   const [newCommander, setNewCommander] = useState("");
+
+  const [commanderSuggestions, setCommanderSuggestions] = useState<string[]>([]);
+const [isSearchingCommander, setIsSearchingCommander] = useState(false);
 
   const [moxfieldUrl, setMoxfieldUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
@@ -71,6 +78,42 @@ export default function DecksPage() {
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
   }, []);
+
+useEffect(() => {
+  const query = newCommander.trim();
+
+  if (query.length < 2) {
+    setCommanderSuggestions([]);
+    return;
+  }
+
+  const timeout = setTimeout(async () => {
+    try {
+      setIsSearchingCommander(true);
+
+      const response = await fetch(
+        `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(
+          query
+        )}`
+      );
+
+      if (!response.ok) {
+        setCommanderSuggestions([]);
+        return;
+      }
+
+      const data = (await response.json()) as ScryfallAutocompleteResponse;
+
+      setCommanderSuggestions(data.data?.slice(0, 8) ?? []);
+    } catch {
+      setCommanderSuggestions([]);
+    } finally {
+      setIsSearchingCommander(false);
+    }
+  }, 300);
+
+  return () => clearTimeout(timeout);
+}, [newCommander]);
 
   useEffect(() => {
     if (!hasLoaded) return;
@@ -469,12 +512,36 @@ const commandersCount = (
               className="input-premium"
             />
 
-            <input
-              value={newCommander}
-              onChange={(e) => setNewCommander(e.target.value)}
-              placeholder="Commandant"
-              className="input-premium"
-            />
+<div className="relative">
+  <input
+    value={newCommander}
+    onChange={(e) => setNewCommander(e.target.value)}
+    placeholder="Commandant"
+    className="input-premium"
+  />
+
+  {(commanderSuggestions.length > 0 || isSearchingCommander) && (
+    <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#09090d] shadow-2xl">
+      {isSearchingCommander && (
+        <p className="p-3 text-sm text-muted">Recherche...</p>
+      )}
+
+      {commanderSuggestions.map((suggestion) => (
+        <button
+          key={suggestion}
+          type="button"
+          onClick={() => {
+            setNewCommander(suggestion);
+            setCommanderSuggestions([]);
+          }}
+          className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10"
+        >
+          {suggestion}
+        </button>
+      ))}
+    </div>
+  )}
+</div>
 
             <button onClick={addDeck} className="btn-primary w-full">
               Ajouter le deck
