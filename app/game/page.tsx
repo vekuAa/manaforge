@@ -150,10 +150,12 @@ export default function GamePage() {
     setPointerStartY(null);
   }
 
-  const gridClass =
-    players.length === 2
-      ? "grid h-[100dvh] grid-rows-2"
-      : "grid h-[100dvh] grid-cols-2 grid-rows-2";
+const gridClass =
+  players.length === 2
+    ? "grid h-[100dvh] grid-rows-2"
+    : players.length === 3
+    ? "grid h-[100dvh] grid-cols-2 grid-rows-2"
+    : "grid h-[100dvh] grid-cols-2 grid-rows-3";
 
   if (!gameStarted) {
     return (
@@ -310,7 +312,7 @@ export default function GamePage() {
   (players.length === 2 && index === 0) ||
   (players.length === 3 && index < 2) ||
   (players.length === 4 && index < 2);
-
+const contentRotation = isRotated ? "rotate-180" : "";
           const commanderKill = Object.values(player.commanderDamage).some(
             (damage) => damage >= 21
           );
@@ -318,15 +320,27 @@ export default function GamePage() {
           return (
             <section
               key={player.id}
-              onPointerDown={(event) => setPointerStartY(event.clientY)}
-              onPointerUp={(event) => handleSwipeEnd(player.id, event.clientY)}
-              className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${getThemeClasses(
-                tableTheme
-              )} p-2 ${isThirdFullWidth ? "col-span-2" : ""} ${isRotated ? "rotate-180" : ""}`}
+onTouchStart={(event) => {
+  setPointerStartY(event.touches[0].clientY);
+}}
+onTouchEnd={(event) => {
+  handleSwipeEnd(player.id, event.changedTouches[0].clientY);
+}}
+onMouseDown={(event) => {
+  setPointerStartY(event.clientY);
+}}
+onMouseUp={(event) => {
+  handleSwipeEnd(player.id, event.clientY);
+}}
+className={`relative overflow-hidden border border-white/10 bg-gradient-to-br ${getThemeClasses(
+  tableTheme
+)} p-2 ${isThirdFullWidth ? "col-span-2" : ""}`}
             >
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-black/50" />
 
-              <div className="relative z-10 flex h-full flex-col items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-2xl backdrop-blur-sm">
+             <div
+  className={`relative z-10 flex h-full flex-col items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-2xl backdrop-blur-sm ${contentRotation}`}
+>
                 <input
                   value={player.name}
                   onChange={(event) =>
