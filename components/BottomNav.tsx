@@ -5,7 +5,7 @@ const items = [
   { href: "/deck", icon: "📚", label: "Decks" },
   { href: "/game", icon: "🎮", label: "Partie" },
   { href: "/commander", icon: "🎲", label: "Random" },
-  { href: "/profile", icon: "👤", label: "Profil" },
+  { href: "/collection", icon: "📦", label: "Collection" },
 ];
 
 export default function BottomNav() {
