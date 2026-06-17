@@ -533,8 +533,8 @@ export default function CollectionPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#101116] text-white">
-      <section className="mx-auto max-w-5xl px-4 pb-28 pt-8">
+    <main className="min-h-screen overflow-x-hidden bg-[#101116] text-white">
+      <section className="mx-auto w-full max-w-md px-3 pb-28 pt-4 md:max-w-5xl md:px-4 md:pt-8">
         {!openedFolder ? (
           <CollectionHome
             globalStats={globalStats}
@@ -598,7 +598,7 @@ export default function CollectionPage() {
       </section>
 
       <div className="fixed bottom-24 right-3 z-40 flex flex-col gap-2">
-        {!openedFolder && (
+        {!openedFolder && activeHomeTab === "collection" && (
           <button
             onClick={() => setShowFolderModal(true)}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f59e0b]/45 text-base shadow-xl shadow-orange-500/10 ring-1 ring-white/10 backdrop-blur-md transition active:scale-95"
@@ -607,7 +607,7 @@ export default function CollectionPage() {
             📁
           </button>
         )}
-        {!openedFolder && (
+        {!openedFolder && activeHomeTab === "collection" && (
           <button
             onClick={() => setShowAddModal(true)}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.08] text-base shadow-xl ring-1 ring-white/10 backdrop-blur-md transition active:scale-95"
@@ -616,16 +616,18 @@ export default function CollectionPage() {
             🎴
           </button>
         )}
-        <button
-          onClick={() => {
-            setScanFolder(openedFolder && openedFolder !== "__ALL__" ? openedFolder : "Non classé");
-            setShowScanModal(true);
-          }}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-black/25 text-base shadow-xl backdrop-blur-md transition active:scale-95"
-          aria-label="Scanner une carte"
-        >
-          ⛶
-        </button>
+        {(openedFolder || activeHomeTab === "collection") && (
+          <button
+            onClick={() => {
+              setScanFolder(openedFolder && openedFolder !== "__ALL__" ? openedFolder : "Non classé");
+              setShowScanModal(true);
+            }}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-black/25 text-base shadow-xl backdrop-blur-md transition active:scale-95"
+            aria-label="Scanner une carte"
+          >
+            ⛶
+          </button>
+        )}
       </div>
 
       {showFolderModal && (
@@ -759,11 +761,11 @@ function CollectionHome({
           <button className="flex h-10 w-10 items-center justify-center rounded-full bg-black/30 text-xl font-black">...</button>
         </div>
 
-        <div className="mt-5 flex justify-center">
+        <div className="mt-3 flex justify-center md:mt-5">
           <CircularValue value={globalStats.totalValue} caption={`${globalStats.totalCards} cartes`} segments={folderSummaries} />
         </div>
 
-        <div className="mt-6 grid grid-cols-2 border-b border-white/10 text-sm font-black">
+        <div className="mt-4 grid grid-cols-2 border-b border-white/10 text-sm font-black">
           <button
             onClick={() => setActiveHomeTab("collection")}
             className={`pb-3 ${activeHomeTab === "collection" ? "border-b-2 border-[#f59e0b] text-[#f59e0b]" : "text-white/70"}`}
@@ -796,7 +798,7 @@ function CollectionHome({
             </div>
           </div>
 
-          <div className={viewMode === "grid" ? "mt-3 grid grid-cols-2 gap-3 md:grid-cols-3" : "mt-3 grid gap-3"}>
+          <div className={viewMode === "grid" ? "mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3" : "mt-3 grid gap-3"}>
             {folderSummaries.map((folder) => (
               <BinderCard
                 key={folder.name}
@@ -861,7 +863,7 @@ function FullsetPanel({
   );
 
   return (
-    <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.055] p-4">
+    <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.055] p-3 md:mt-5 md:p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-black">Full set interactif</h2>
@@ -870,7 +872,7 @@ function FullsetPanel({
         <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
       </div>
 
-      <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
         <input
           value={fullsetCode}
           onChange={(event) => setFullsetCode(event.target.value)}
@@ -925,15 +927,15 @@ function FullsetPanel({
                 <button
                   key={card.id}
                   onClick={() => onAddCard(card)}
-                  className={`flex items-center gap-3 rounded-xl border p-3 text-left transition active:scale-[0.99] ${owned ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/[0.055]"}`}
+                  className={`flex w-full max-w-full items-center gap-2 rounded-xl border p-2 text-left transition active:scale-[0.99] md:gap-3 md:p-3 ${owned ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/[0.055]"}`}
                 >
-                  {getCardArt(card) ? <img src={getCardArt(card)} alt={card.name} className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl bg-black/30" />}
+                  {getCardArt(card) ? <img src={getCardArt(card)} alt={card.name} className="h-12 w-12 shrink-0 rounded-xl object-cover md:h-14 md:w-14" /> : <div className="h-12 w-12 shrink-0 rounded-xl bg-black/30 md:h-14 md:w-14" />}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-black">{card.name}</p>
-                    <p className="text-xs text-white/60">{card.set?.toUpperCase()} #{card.collector_number} · {card.rarity}</p>
+                    <p className="truncate text-sm font-black md:text-base">{card.name}</p>
+                    <p className="truncate text-[11px] text-white/60 md:text-xs">{card.set?.toUpperCase()} #{card.collector_number} · {card.rarity}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-black">{formatCurrency(getCardPrice(card), 2)}</p>
+                  <div className="w-[72px] shrink-0 text-right md:w-auto">
+                    <p className="text-sm font-black md:text-base">{formatCurrency(getCardPrice(card), 2)}</p>
                     <p className={owned ? "text-xs font-black text-emerald-300" : "text-xs font-bold text-white/45"}>{owned ? "Possédée" : "Ajouter"}</p>
                   </div>
                 </button>
@@ -999,7 +1001,7 @@ function BinderCard({
         </button>
         <ColorDots color={folder.color} onColorChange={onColorChange} />
         {!isDefaultFolder && (
-          <button onClick={onDelete} className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-1 text-xs text-red-300 opacity-0 group-hover:opacity-100">
+          <button onClick={() => { if (window.confirm(`Supprimer le dossier "${folder.name}" ? Les cartes seront déplacées dans Non classé.`)) onDelete(); }} className="absolute right-2 top-2 rounded-full bg-black/55 px-2 py-1 text-xs font-black text-red-300 ring-1 ring-white/10">
             ✕
           </button>
         )}
@@ -1022,7 +1024,7 @@ function BinderCard({
       </button>
       <div className="px-4 pb-2"><ColorDots color={folder.color} onColorChange={onColorChange} /></div>
       {!isDefaultFolder && (
-        <button onClick={onDelete} className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-1 text-xs text-red-300 opacity-0 group-hover:opacity-100">
+        <button onClick={() => { if (window.confirm(`Supprimer le dossier "${folder.name}" ? Les cartes seront déplacées dans Non classé.`)) onDelete(); }} className="absolute right-2 top-2 rounded-full bg-black/55 px-2 py-1 text-xs font-black text-red-300 ring-1 ring-white/10">
           ✕
         </button>
       )}
@@ -1157,10 +1159,10 @@ function CardTile({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; o
       {card.image ? <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" /> : <div className="aspect-[63/88] rounded-lg bg-black/30" />}
       <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
       <p className="text-[10px] text-white/60">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
-      <div className="absolute inset-x-1 bottom-8 hidden grid-cols-3 gap-1 group-hover:grid">
-        <button onClick={onMinus} className="rounded bg-black/70 py-1">−</button>
-        <button onClick={onPlus} className="rounded bg-[#f59e0b] py-1 text-black">+</button>
-        <button onClick={onDelete} className="rounded bg-red-500/80 py-1">×</button>
+      <div className="mt-2 grid grid-cols-3 gap-1">
+        <button onClick={onMinus} className="rounded-lg bg-black/70 py-1 text-sm font-black">−</button>
+        <button onClick={onPlus} className="rounded-lg bg-[#f59e0b] py-1 text-sm font-black text-black">+</button>
+        <button onClick={() => { if (window.confirm(`Supprimer "${card.name}" de la collection ?`)) onDelete(); }} className="rounded-lg bg-red-500/80 py-1 text-sm font-black">×</button>
       </div>
     </div>
   );
@@ -1168,7 +1170,7 @@ function CardTile({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; o
 
 function CardRow({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; onMinus: () => void; onPlus: () => void; onDelete: () => void }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
+    <div className="flex w-full min-w-0 gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
       {card.image ? <img src={card.image} alt={card.name} className="h-20 w-14 rounded-lg object-cover" /> : <div className="h-20 w-14 rounded-lg bg-black/30" />}
       <div className="min-w-0 flex-1">
         <p className="truncate font-black">{card.name}</p>
@@ -1177,7 +1179,7 @@ function CardRow({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; on
         <div className="mt-2 flex gap-2">
           <button onClick={onMinus} className="rounded-lg bg-black/30 px-3 py-1">−</button>
           <button onClick={onPlus} className="rounded-lg bg-[#f59e0b] px-3 py-1 text-black">+</button>
-          <button onClick={onDelete} className="rounded-lg bg-red-500/20 px-3 py-1 text-red-200">×</button>
+          <button onClick={() => { if (window.confirm(`Supprimer "${card.name}" de la collection ?`)) onDelete(); }} className="rounded-lg bg-red-500/20 px-3 py-1 text-red-200">×</button>
         </div>
       </div>
     </div>
