@@ -68,6 +68,7 @@ export default function CollectionPage() {
   const [folderFilter, setFolderFilter] = useState("Toutes");
   const [setFilter, setSetFilter] = useState("Toutes");
   const [openedFolder, setOpenedFolder] = useState<string | null>(null);
+  const [showFolderModal, setShowFolderModal] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   const [fullsetCode, setFullsetCode] = useState("");
@@ -449,65 +450,108 @@ export default function CollectionPage() {
         </header>
 
         {!openedFolder && (
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            {folders
-              .filter((folder) => folder !== "Toutes")
-              .map((folder) => {
-                const folderCards = cards.filter(
-                  (card) => card.folder === folder
-                );
+          <section className="mt-7">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black">Mes dossiers</h2>
+                <p className="mt-1 text-sm text-muted">
+                  Ouvre un dossier pour voir uniquement ses cartes.
+                </p>
+              </div>
 
-                const folderValue = folderCards.reduce(
-                  (sum, card) => sum + card.price * card.quantity,
-                  0
-                );
+              <button
+                onClick={() => setShowFolderModal(true)}
+                className="rounded-2xl bg-accent px-4 py-3 text-sm font-black text-black shadow-xl"
+              >
+                + Dossier
+              </button>
+            </div>
 
-                return (
-                  <div key={folder} className="card-soft p-4">
-                    <button
-                      onClick={() => {
-                        setOpenedFolder(folder);
-                        setFolderFilter(folder);
-                      }}
-                      className="w-full text-left"
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {folders
+                .filter((folder) => folder !== "Toutes")
+                .map((folder) => {
+                  const folderCards = cards.filter(
+                    (card) => card.folder === folder
+                  );
+
+                  const folderQuantity = folderCards.reduce(
+                    (sum, card) => sum + card.quantity,
+                    0
+                  );
+
+                  const folderValue = folderCards.reduce(
+                    (sum, card) => sum + card.price * card.quantity,
+                    0
+                  );
+
+                  return (
+                    <div
+                      key={folder}
+                      className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] p-4 shadow-xl transition hover:scale-[1.02] hover:border-accent/50"
                     >
-                      <div className="text-4xl">📁</div>
-                      <p className="mt-2 font-black">{folder}</p>
-                      <p className="text-sm text-muted">
-                        {folderCards.length} cartes
-                      </p>
-                      <p className="text-sm font-bold text-accent">
-                        {folderValue.toFixed(2)}€
-                      </p>
-                    </button>
-
-                    {!["Non classé"].includes(folder) && (
                       <button
-                        onClick={() => deleteFolder(folder)}
-                        className="mt-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300"
+                        onClick={() => {
+                          setOpenedFolder(folder);
+                          setFolderFilter(folder);
+                        }}
+                        className="w-full text-left"
                       >
-                        Supprimer
+                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/15 text-3xl ring-1 ring-accent/20">
+                          📁
+                        </div>
+
+                        <p className="mt-4 line-clamp-1 text-lg font-black">
+                          {folder}
+                        </p>
+
+                        <p className="mt-1 text-xs font-bold uppercase tracking-wider text-muted">
+                          {folderCards.length} uniques · {folderQuantity} total
+                        </p>
+
+                        <p className="mt-3 text-lg font-black text-accent">
+                          {folderValue.toFixed(2)}€
+                        </p>
                       </button>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
+
+                      {folder !== "Non classé" && (
+                        <button
+                          onClick={() => deleteFolder(folder)}
+                          className="absolute right-3 top-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 opacity-80 transition hover:opacity-100"
+                          title="Supprimer le dossier"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </section>
         )}
 
         {openedFolder && (
-          <div className="mt-5 flex items-center justify-between rounded-2xl bg-white/5 p-4">
+          <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.06] p-4">
             <button
               onClick={() => {
                 setOpenedFolder(null);
                 setFolderFilter("Toutes");
               }}
-              className="rounded-xl bg-white/10 px-4 py-2 text-sm font-black"
+              className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black"
             >
-              ← Retour
+              ← Retour aux dossiers
             </button>
 
-            <p className="font-black text-accent">{openedFolder}</p>
+            <div className="mt-4 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-muted">
+                  Dossier ouvert
+                </p>
+                <h2 className="mt-1 text-3xl font-black text-accent">
+                  {openedFolder}
+                </h2>
+              </div>
+            </div>
           </div>
         )}
 
@@ -626,19 +670,6 @@ export default function CollectionPage() {
                   </option>
                 ))}
             </select>
-
-            <div className="grid grid-cols-[1fr_auto] gap-3">
-              <input
-                value={newFolder}
-                onChange={(event) => setNewFolder(event.target.value)}
-                placeholder="Créer un dossier"
-                className="input-premium"
-              />
-
-              <button onClick={createFolder} className="btn-soft px-5">
-                +
-              </button>
-            </div>
 
             {error && (
               <p className="rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">
@@ -781,6 +812,73 @@ export default function CollectionPage() {
           )}
         </div>
       </section>
+
+      <button
+        onClick={() => setShowFolderModal(true)}
+        className="fixed bottom-24 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-3xl font-black text-black shadow-2xl transition hover:scale-105"
+        aria-label="Créer un dossier"
+      >
+        +
+      </button>
+
+      {showFolderModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0f0f15] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
+                  Collection
+                </p>
+                <h2 className="mt-2 text-2xl font-black">Nouveau dossier</h2>
+              </div>
+
+              <button
+                onClick={() => setShowFolderModal(false)}
+                className="rounded-2xl bg-white/10 px-3 py-2 font-black"
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <input
+              value={newFolder}
+              onChange={(event) => setNewFolder(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  createFolder();
+                  setShowFolderModal(false);
+                }
+              }}
+              placeholder="Nom du dossier"
+              className="input-premium mt-5"
+              autoFocus
+            />
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                onClick={() => {
+                  setNewFolder("");
+                  setShowFolderModal(false);
+                }}
+                className="btn-soft"
+              >
+                Annuler
+              </button>
+
+              <button
+                onClick={() => {
+                  createFolder();
+                  setShowFolderModal(false);
+                }}
+                className="btn-primary"
+              >
+                Créer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <BottomNav />
     </main>
