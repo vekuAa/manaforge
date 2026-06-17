@@ -1,9 +1,9 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @next/next/no-img-element */
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import BottomNav from "@/components/BottomNav";
 
 type CollectionCard = {
@@ -28,95 +28,112 @@ type ScryfallCard = {
   set?: string;
   collector_number?: string;
   rarity?: string;
-  image_uris?: { normal?: string };
-  card_faces?: { image_uris?: { normal?: string } }[];
+  image_uris?: { normal?: string; art_crop?: string };
+  card_faces?: { image_uris?: { normal?: string; art_crop?: string } }[];
   prices?: { eur?: string | null; usd?: string | null };
 };
 
-type ScryfallSearchResponse = {
-  data: ScryfallCard[];
-  has_more?: boolean;
-  next_page?: string;
+type ScryfallSearchResponse = { data: ScryfallCard[]; has_more?: boolean; next_page?: string };
+type ScryfallAutocompleteResponse = { data?: string[] };
+type FolderSummary = {
+  name: string;
+  uniqueCards: number;
+  totalQuantity: number;
+  totalValue: number;
+  color: string;
+  cover?: string;
 };
 
-type ScryfallAutocompleteResponse = {
-  data?: string[];
+type TesseractWorker = {
+  recognize: (file: File) => Promise<{ data: { text: string } }>;
+  terminate: () => Promise<void>;
+};
+
+type TesseractApi = {
+  createWorker: (language?: string) => Promise<TesseractWorker>;
 };
 
 const FOLDER_COLOR_PALETTE = [
-  "#facc15",
-  "#60a5fa",
-  "#a78bfa",
-  "#fb7185",
-  "#34d399",
-  "#f97316",
   "#22d3ee",
-  "#f472b6",
+  "#ef4444",
+  "#a855f7",
+  "#22c55e",
+  "#f97316",
+  "#eab308",
+  "#ec4899",
+  "#94a3b8",
 ];
 
 const DEFAULT_FOLDER_COLORS: Record<string, string> = {
-  "Non classé": "#facc15",
-  Commander: "#60a5fa",
-  Trade: "#a78bfa",
-  Staples: "#34d399",
+  "Non classé": "#22d3ee",
+  Commander: "#f97316",
+  Trade: "#a855f7",
+  Staples: "#22c55e",
 };
 
 function getFallbackFolderColor(folder: string) {
   let hash = 0;
-
   for (let index = 0; index < folder.length; index += 1) {
     hash = folder.charCodeAt(index) + ((hash << 5) - hash);
   }
-
   return FOLDER_COLOR_PALETTE[Math.abs(hash) % FOLDER_COLOR_PALETTE.length];
+}
+
+function formatCurrency(value: number, maxDigits = 2) {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: maxDigits,
+  }).format(value);
+}
+
+function getCardImage(card: ScryfallCard) {
+  return card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal || "";
+}
+
+function getCardArt(card: ScryfallCard) {
+  return card.image_uris?.art_crop || card.card_faces?.[0]?.image_uris?.art_crop || getCardImage(card);
+}
+
+function getCardPrice(card: ScryfallCard) {
+  return Number(card.prices?.eur || card.prices?.usd || 0);
 }
 
 export default function CollectionPage() {
   const [cards, setCards] = useState<CollectionCard[]>([]);
-  const [folders, setFolders] = useState<string[]>([
-    "Toutes",
-    "Non classé",
-    "Commander",
-    "Trade",
-    "Staples",
-  ]);
-
+  const [folders, setFolders] = useState<string[]>(["Toutes", "Non classé", "Commander", "Trade", "Staples"]);
+  const [folderColors, setFolderColors] = useState<Record<string, string>>(DEFAULT_FOLDER_COLORS);
   const [hasLoaded, setHasLoaded] = useState(false);
 
-  const [cardName, setCardName] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [selectedFolder, setSelectedFolder] = useState("Non classé");
+  const [openedFolder, setOpenedFolder] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [search, setSearch] = useState("");
+  const [setFilter, setSetFilter] = useState("Toutes");
+
+  const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolder, setNewFolder] = useState("");
   const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLOR_PALETTE[0]);
 
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [cardName, setCardName] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [selectedFolder, setSelectedFolder] = useState("Non classé");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [printOptions, setPrintOptions] = useState<ScryfallCard[]>([]);
   const [selectedPrintId, setSelectedPrintId] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
 
-  const [search, setSearch] = useState("");
-  const [folderFilter, setFolderFilter] = useState("Toutes");
-  const [setFilter, setSetFilter] = useState("Toutes");
-  const [openedFolder, setOpenedFolder] = useState<string | null>(null);
-  const [showFolderModal, setShowFolderModal] = useState(false);
-  const [folderColors, setFolderColors] = useState<Record<string, string>>(DEFAULT_FOLDER_COLORS);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [showScanModal, setShowScanModal] = useState(false);
-  const [scanSetCode, setScanSetCode] = useState("");
-  const [scanCollectorNumber, setScanCollectorNumber] = useState("");
   const [scanFolder, setScanFolder] = useState("Non classé");
   const [scanQuantity, setScanQuantity] = useState(1);
   const [scanPreview, setScanPreview] = useState("");
   const [scanStatus, setScanStatus] = useState("");
-  const [isScanAdding, setIsScanAdding] = useState(false);
-  const [isRecognizingScan, setIsRecognizingScan] = useState(false);
-
-  const [fullsetCode, setFullsetCode] = useState("");
-  const [fullsetCards, setFullsetCards] = useState<ScryfallCard[]>([]);
-  const [isLoadingFullset, setIsLoadingFullset] = useState(false);
-
-  const [isAdding, setIsAdding] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
+  const [scanResult, setScanResult] = useState<ScryfallCard | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     try {
@@ -125,22 +142,10 @@ export default function CollectionPage() {
       const savedFolderColors = localStorage.getItem("manaforge-folder-colors");
 
       const parsedCards = savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : [];
-      setCards(
-        parsedCards.map((card) => ({
-          ...card,
-          folder: card.folder || "Non classé",
-        })),
-      );
-
-      if (savedFolders) {
-        setFolders(JSON.parse(savedFolders) as string[]);
-      }
-
+      setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé" })));
+      if (savedFolders) setFolders(JSON.parse(savedFolders) as string[]);
       if (savedFolderColors) {
-        setFolderColors({
-          ...DEFAULT_FOLDER_COLORS,
-          ...(JSON.parse(savedFolderColors) as Record<string, string>),
-        });
+        setFolderColors({ ...DEFAULT_FOLDER_COLORS, ...(JSON.parse(savedFolderColors) as Record<string, string>) });
       }
     } catch {
       setCards([]);
@@ -151,7 +156,6 @@ export default function CollectionPage() {
 
   useEffect(() => {
     if (!hasLoaded) return;
-
     localStorage.setItem("manaforge-collection", JSON.stringify(cards));
     localStorage.setItem("manaforge-folders", JSON.stringify(folders));
     localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
@@ -159,507 +163,164 @@ export default function CollectionPage() {
 
   useEffect(() => {
     const query = cardName.trim();
-
     if (query.length < 2) {
       setSuggestions([]);
       return;
     }
-
     const timeout = setTimeout(async () => {
       try {
-        const response = await fetch(
-          `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(
-            query,
-          )}`,
-        );
-
-        if (!response.ok) {
-          setSuggestions([]);
-          return;
-        }
-
+        const response = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(query)}`);
+        if (!response.ok) return setSuggestions([]);
         const data = (await response.json()) as ScryfallAutocompleteResponse;
         setSuggestions(data.data?.slice(0, 8) ?? []);
       } catch {
         setSuggestions([]);
       }
     }, 250);
-
     return () => clearTimeout(timeout);
   }, [cardName]);
 
-  const extensions = useMemo(() => {
-    const values = cards
-      .map((card) => card.setName)
-      .filter((value): value is string => Boolean(value));
-
-    return ["Toutes", ...Array.from(new Set(values)).sort()];
-  }, [cards]);
-
-  const filteredCards = useMemo(() => {
-    return cards.filter((card) => {
-      const matchesSearch = card.name
-        .toLowerCase()
-        .includes(search.toLowerCase());
-
-      const matchesFolder =
-        folderFilter === "Toutes" || card.folder === folderFilter;
-
-      const matchesSet = setFilter === "Toutes" || card.setName === setFilter;
-
-      return matchesSearch && matchesFolder && matchesSet;
-    });
-  }, [cards, search, folderFilter, setFilter]);
-
-  const stats = useMemo(() => {
-    const totalCards = filteredCards.reduce(
-      (sum, card) => sum + card.quantity,
-      0,
-    );
-
-    const totalValue = filteredCards.reduce(
-      (sum, card) => sum + card.quantity * card.price,
-      0,
-    );
-
-    return {
-      totalCards,
-      uniqueCards: filteredCards.length,
-      totalValue: Math.round(totalValue * 100) / 100,
-    };
-  }, [filteredCards]);
-
   const globalStats = useMemo(() => {
     const totalCards = cards.reduce((sum, card) => sum + card.quantity, 0);
-    const totalValue = cards.reduce(
-      (sum, card) => sum + card.quantity * card.price,
-      0,
-    );
-
-    return {
-      totalCards,
-      uniqueCards: cards.length,
-      totalValue: Math.round(totalValue * 100) / 100,
-    };
+    const totalValue = cards.reduce((sum, card) => sum + card.quantity * card.price, 0);
+    return { totalCards, uniqueCards: cards.length, totalValue: Math.round(totalValue * 100) / 100 };
   }, [cards]);
 
-  const folderSummaries = useMemo(() => {
+  const folderSummaries = useMemo<FolderSummary[]>(() => {
     return folders
       .filter((folder) => folder !== "Toutes")
       .map((folder) => {
         const folderCards = cards.filter((card) => (card.folder || "Non classé") === folder);
-        const totalQuantity = folderCards.reduce(
-          (sum, card) => sum + card.quantity,
-          0,
-        );
-        const totalValue = folderCards.reduce(
-          (sum, card) => sum + card.price * card.quantity,
-          0,
-        );
-
+        const totalQuantity = folderCards.reduce((sum, card) => sum + card.quantity, 0);
+        const totalValue = folderCards.reduce((sum, card) => sum + card.price * card.quantity, 0);
         return {
           name: folder,
           uniqueCards: folderCards.length,
           totalQuantity,
           totalValue: Math.round(totalValue * 100) / 100,
           color: folderColors[folder] || getFallbackFolderColor(folder),
+          cover: folderCards.find((card) => card.image)?.image,
         };
       });
   }, [cards, folders, folderColors]);
 
-  const fullsetProgress = useMemo(() => {
-    if (fullsetCards.length === 0) {
-      return {
-        owned: 0,
-        total: 0,
-        percent: 0,
-        missing: [] as ScryfallCard[],
-      };
-    }
+  const extensions = useMemo(() => {
+    const values = cards.map((card) => card.setName).filter((value): value is string => Boolean(value));
+    return ["Toutes", ...Array.from(new Set(values)).sort()];
+  }, [cards]);
 
-    const ownedKeys = new Set(
-      cards
-        .filter(
-          (card) =>
-            card.setCode?.toLowerCase() === fullsetCode.trim().toLowerCase(),
-        )
-        .map((card) => `${card.setCode}-${card.collectorNumber}`),
-    );
-
-    const missing = fullsetCards.filter(
-      (card) => !ownedKeys.has(`${card.set}-${card.collector_number}`),
-    );
-
-    const owned = fullsetCards.length - missing.length;
-
-    return {
-      owned,
-      total: fullsetCards.length,
-      percent:
-        fullsetCards.length > 0
-          ? Math.round((owned / fullsetCards.length) * 100)
-          : 0,
-      missing,
-    };
-  }, [cards, fullsetCards, fullsetCode]);
+  const openedFolderSummary = folderSummaries.find((folder) => folder.name === openedFolder);
 
   const visibleCards = useMemo(() => {
-    if (!openedFolder) return filteredCards;
-
     return cards.filter((card) => {
-      const matchesFolder = (card.folder || "Non classé") === openedFolder;
-      const matchesSearch = card.name
-        .toLowerCase()
-        .includes(search.toLowerCase());
+      const matchesFolder = !openedFolder || (card.folder || "Non classé") === openedFolder;
+      const matchesSearch = card.name.toLowerCase().includes(search.toLowerCase());
       const matchesSet = setFilter === "Toutes" || card.setName === setFilter;
-
       return matchesFolder && matchesSearch && matchesSet;
     });
-  }, [cards, filteredCards, openedFolder, search, setFilter]);
+  }, [cards, openedFolder, search, setFilter]);
 
-  function getCardImage(card: ScryfallCard) {
-    return (
-      card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal || ""
-    );
-  }
-
-  function getCardPrice(card: ScryfallCard) {
-    return Number(card.prices?.eur || card.prices?.usd || 0);
-  }
-
-  function formatCurrency(value: number) {
-    return new Intl.NumberFormat("fr-FR", {
-      style: "currency",
-      currency: "EUR",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  }
+  const openedStats = useMemo(() => {
+    const totalCards = visibleCards.reduce((sum, card) => sum + card.quantity, 0);
+    const totalValue = visibleCards.reduce((sum, card) => sum + card.quantity * card.price, 0);
+    return { totalCards, uniqueCards: visibleCards.length, totalValue: Math.round(totalValue * 100) / 100 };
+  }, [visibleCards]);
 
   function createFolder() {
     const cleanFolder = newFolder.trim();
-
     if (!cleanFolder || folders.includes(cleanFolder)) {
       setNewFolder("");
       return;
     }
-
     setFolders((current) => [...current, cleanFolder]);
-    setFolderColors((current) => ({
-      ...current,
-      [cleanFolder]: newFolderColor,
-    }));
+    setFolderColors((current) => ({ ...current, [cleanFolder]: newFolderColor }));
     setSelectedFolder(cleanFolder);
+    setScanFolder(cleanFolder);
     setNewFolder("");
     setNewFolderColor(FOLDER_COLOR_PALETTE[0]);
   }
 
   function deleteFolder(folder: string) {
     if (["Toutes", "Non classé"].includes(folder)) return;
-
-    setCards((current) =>
-      current.map((card) =>
-        card.folder === folder ? { ...card, folder: "Non classé" } : card,
-      ),
-    );
-
+    setCards((current) => current.map((card) => (card.folder === folder ? { ...card, folder: "Non classé" } : card)));
     setFolders((current) => current.filter((item) => item !== folder));
     setFolderColors((current) => {
       const next = { ...current };
       delete next[folder];
       return next;
     });
-
     if (openedFolder === folder) setOpenedFolder(null);
-    if (folderFilter === folder) setFolderFilter("Toutes");
-    if (selectedFolder === folder) setSelectedFolder("Non classé");
+  }
+
+  function addCardToCollection(card: ScryfallCard, folder: string, amount: number) {
+    const cleanFolder = folder === "Toutes" ? "Non classé" : folder;
+    setCards((current) => {
+      const existing = current.find(
+        (item) =>
+          item.setCode?.toLowerCase() === card.set?.toLowerCase() &&
+          item.collectorNumber === card.collector_number &&
+          (item.folder || "Non classé") === cleanFolder,
+      );
+      if (existing) {
+        return current.map((item) => (item.id === existing.id ? { ...item, quantity: item.quantity + amount } : item));
+      }
+      return [
+        ...current,
+        {
+          id: Date.now(),
+          name: card.name,
+          image: getCardImage(card),
+          quantity: amount,
+          price: getCardPrice(card),
+          typeLine: card.type_line || "",
+          setName: card.set_name || "Extension inconnue",
+          setCode: card.set || "",
+          collectorNumber: card.collector_number || "",
+          rarity: card.rarity || "unknown",
+          folder: cleanFolder,
+        },
+      ];
+    });
   }
 
   async function searchPrints() {
     const cleanName = cardName.trim();
-
-    if (!cleanName) {
-      setError("Entre le nom d’une carte.");
-      return;
-    }
-
+    if (!cleanName) return setError("Entre le nom d’une carte.");
     try {
       setIsSearching(true);
       setError("");
       setPrintOptions([]);
-      setSelectedPrintId("");
-
       const response = await fetch(
-        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
-          `!"${cleanName}" unique:prints`,
-        )}&order=released`,
+        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!\"${cleanName}\" unique:prints`)}&order=released`,
       );
-
-      if (!response.ok) {
-        throw new Error("Carte introuvable sur Scryfall.");
-      }
-
+      if (!response.ok) throw new Error("Carte introuvable sur Scryfall.");
       const data = (await response.json()) as ScryfallSearchResponse;
-
       setPrintOptions(data.data.slice(0, 30));
       setSelectedPrintId(data.data[0]?.id ?? "");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Erreur pendant la recherche.",
-      );
+      setError(err instanceof Error ? err.message : "Erreur pendant la recherche.");
     } finally {
       setIsSearching(false);
     }
   }
 
   async function addSelectedPrint() {
-    const selectedPrint = printOptions.find(
-      (card) => card.id === selectedPrintId,
-    );
-
-    if (!selectedPrint) {
-      setError("Choisis une impression de carte.");
-      return;
-    }
-
-    try {
-      setIsAdding(true);
-      setError("");
-
-      const folder =
-        selectedFolder === "Toutes" ? "Non classé" : selectedFolder;
-
-      setCards((current) => {
-        const existing = current.find(
-          (card) =>
-            card.name.toLowerCase() === selectedPrint.name.toLowerCase() &&
-            card.setCode === selectedPrint.set &&
-            card.collectorNumber === selectedPrint.collector_number &&
-            card.folder === folder,
-        );
-
-        if (existing) {
-          return current.map((card) =>
-            card.id === existing.id
-              ? { ...card, quantity: card.quantity + quantity }
-              : card,
-          );
-        }
-
-        return [
-          ...current,
-          {
-            id: Date.now(),
-            name: selectedPrint.name,
-            image: getCardImage(selectedPrint),
-            quantity,
-            price: getCardPrice(selectedPrint),
-            typeLine: selectedPrint.type_line || "",
-            setName: selectedPrint.set_name || "Extension inconnue",
-            setCode: selectedPrint.set || "",
-            collectorNumber: selectedPrint.collector_number || "",
-            rarity: selectedPrint.rarity || "unknown",
-            folder,
-          },
-        ];
-      });
-
-      setCardName("");
-      setQuantity(1);
-      setSuggestions([]);
-      setPrintOptions([]);
-      setSelectedPrintId("");
-    } catch {
-      setError("Erreur pendant l’ajout.");
-    } finally {
-      setIsAdding(false);
-    }
-  }
-
-  async function recognizeCardTextFromImage(file: File) {
-    type DetectedText = { rawValue?: string };
-    type TextDetectorConstructor = new () => {
-      detect: (source: ImageBitmap) => Promise<DetectedText[]>;
-    };
-
-    const textDetector = (window as unknown as {
-      TextDetector?: TextDetectorConstructor;
-    }).TextDetector;
-
-    if (!textDetector) {
-      setScanStatus(
-        "Reconnaissance auto indisponible sur ce navigateur. Entre le code extension et le numéro manuellement.",
-      );
-      return;
-    }
-
-    try {
-      setIsRecognizingScan(true);
-      setScanStatus("Analyse de la photo...");
-
-      const bitmap = await createImageBitmap(file);
-      const detector = new textDetector();
-      const detections = await detector.detect(bitmap);
-      const detectedText = detections
-        .map((item) => item.rawValue || "")
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      const collectorMatch = detectedText.match(/(?:^|\s)(\d{1,4})(?:\s*\/\s*\d{1,4})?(?:\s|$)/);
-      const setMatch = detectedText.match(/\b[A-Z0-9]{2,5}\b/g);
-      const ignoredTokens = new Set(["EN", "FR", "JP", "DE", "ES", "IT", "PT"]);
-      const cleanSet = setMatch
-        ?.find((token) => ignoredTokens.has(token) === false)
-        ?.toLowerCase();
-
-      if (collectorMatch?.[1]) setScanCollectorNumber(collectorMatch[1]);
-      if (cleanSet) setScanSetCode(cleanSet);
-
-      if (collectorMatch?.[1] || cleanSet) {
-        setScanStatus(
-          "Lecture partielle détectée. Vérifie le code et le numéro avant ajout.",
-        );
-      } else {
-        setScanStatus(
-          "Je n’ai pas réussi à lire la carte. Remplis le code extension et le numéro manuellement.",
-        );
-      }
-    } catch {
-      setScanStatus("Erreur pendant la reconnaissance. Remplissage manuel nécessaire.");
-    } finally {
-      setIsRecognizingScan(false);
-    }
-  }
-
-  async function addScannedCard() {
-    const cleanSet = scanSetCode.trim().toLowerCase();
-    const cleanNumber = scanCollectorNumber.trim();
-
-    if (!cleanSet || !cleanNumber) {
-      setError("Entre le code d’extension et le numéro de collection.");
-      return;
-    }
-
-    try {
-      setIsScanAdding(true);
-      setError("");
-
-      const response = await fetch(
-        `https://api.scryfall.com/cards/${encodeURIComponent(cleanSet)}/${encodeURIComponent(cleanNumber)}`,
-      );
-
-      if (!response.ok) {
-        throw new Error("Carte introuvable avec ce code et ce numéro.");
-      }
-
-      const card = (await response.json()) as ScryfallCard;
-      const folder = scanFolder === "Toutes" ? "Non classé" : scanFolder;
-
-      setCards((current) => {
-        const existing = current.find(
-          (item) =>
-            item.setCode?.toLowerCase() === card.set?.toLowerCase() &&
-            item.collectorNumber === card.collector_number &&
-            (item.folder || "Non classé") === folder,
-        );
-
-        if (existing) {
-          return current.map((item) =>
-            item.id === existing.id
-              ? { ...item, quantity: item.quantity + scanQuantity }
-              : item,
-          );
-        }
-
-        return [
-          ...current,
-          {
-            id: Date.now(),
-            name: card.name,
-            image: getCardImage(card),
-            quantity: scanQuantity,
-            price: getCardPrice(card),
-            typeLine: card.type_line || "",
-            setName: card.set_name || "Extension inconnue",
-            setCode: card.set || "",
-            collectorNumber: card.collector_number || "",
-            rarity: card.rarity || "unknown",
-            folder,
-          },
-        ];
-      });
-
-      setScanSetCode("");
-      setScanCollectorNumber("");
-      setScanQuantity(1);
-      setScanPreview("");
-      setScanStatus("");
-      setShowScanModal(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur pendant le scan.");
-    } finally {
-      setIsScanAdding(false);
-    }
-  }
-
-  async function loadFullset() {
-    const cleanSet = fullsetCode.trim().toLowerCase();
-
-    if (!cleanSet) {
-      setError("Entre un code d’extension. Exemple : mh3");
-      return;
-    }
-
-    try {
-      setIsLoadingFullset(true);
-      setError("");
-
-      let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
-        `e:${cleanSet}`,
-      )}&unique=prints&order=set`;
-
-      const allCards: ScryfallCard[] = [];
-
-      while (url) {
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error("Extension introuvable sur Scryfall.");
-        }
-
-        const data = (await response.json()) as ScryfallSearchResponse;
-
-        allCards.push(...data.data);
-        url = data.has_more && data.next_page ? data.next_page : "";
-      }
-
-      setFullsetCards(allCards);
-    } catch (err) {
-      setFullsetCards([]);
-      setError(
-        err instanceof Error ? err.message : "Erreur pendant le fullset.",
-      );
-    } finally {
-      setIsLoadingFullset(false);
-    }
+    const selectedPrint = printOptions.find((card) => card.id === selectedPrintId);
+    if (!selectedPrint) return setError("Choisis une impression de carte.");
+    setIsAdding(true);
+    addCardToCollection(selectedPrint, selectedFolder, quantity);
+    setIsAdding(false);
+    setCardName("");
+    setQuantity(1);
+    setSuggestions([]);
+    setPrintOptions([]);
+    setSelectedPrintId("");
+    setShowAddModal(false);
   }
 
   function updateQuantity(id: number, amount: number) {
     setCards((current) =>
-      current
-        .map((card) =>
-          card.id === id
-            ? { ...card, quantity: Math.max(0, card.quantity + amount) }
-            : card,
-        )
-        .filter((card) => card.quantity > 0),
-    );
-  }
-
-  function updateCardFolder(id: number, folder: string) {
-    setCards((current) =>
-      current.map((card) => (card.id === id ? { ...card, folder } : card)),
+      current.map((card) => (card.id === id ? { ...card, quantity: Math.max(0, card.quantity + amount) } : card)).filter((card) => card.quantity > 0),
     );
   }
 
@@ -667,671 +328,223 @@ export default function CollectionPage() {
     setCards((current) => current.filter((card) => card.id !== id));
   }
 
+  async function loadTesseract() {
+    const existing = (window as unknown as { Tesseract?: TesseractApi }).Tesseract;
+    if (existing) return existing;
+
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Impossible de charger le moteur OCR."));
+      document.body.appendChild(script);
+    });
+
+    const loaded = (window as unknown as { Tesseract?: TesseractApi }).Tesseract;
+    if (!loaded) throw new Error("Moteur OCR indisponible.");
+    return loaded;
+  }
+
+  function extractPossibleCardName(text: string) {
+    const lines = text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 2);
+
+    const badWords = ["instant", "sorcery", "creature", "artifact", "enchantment", "land", "planeswalker", "basic", "legendary"];
+    return lines.find((line) => !badWords.some((word) => line.toLowerCase().includes(word))) || lines[0] || "";
+  }
+
+  function extractSetAndNumber(text: string) {
+    const normalized = text.replace(/\s+/g, " ");
+    const numberMatch = normalized.match(/(?:^|\s)(\d{1,4})(?:\s*\/\s*\d{1,4})?(?:\s|$)/);
+    const tokens = normalized.match(/\b[A-Z0-9]{2,5}\b/g) || [];
+    const ignored = new Set(["EN", "FR", "DE", "ES", "IT", "PT", "JP", "USA", "TM", "MTG"]);
+    const setCode = tokens.find((token) => !ignored.has(token) && /[A-Z]/.test(token));
+    return { setCode: setCode?.toLowerCase(), collectorNumber: numberMatch?.[1] };
+  }
+
+  async function findCardFromOcr(text: string) {
+    const { setCode, collectorNumber } = extractSetAndNumber(text);
+
+    if (setCode && collectorNumber) {
+      const response = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(setCode)}/${encodeURIComponent(collectorNumber)}`);
+      if (response.ok) return (await response.json()) as ScryfallCard;
+    }
+
+    const possibleName = extractPossibleCardName(text);
+    if (possibleName) {
+      const response = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(possibleName)}`);
+      if (response.ok) return (await response.json()) as ScryfallCard;
+    }
+
+    throw new Error("Carte non reconnue. Reprends la photo plus près, bien droite et avec le nom de la carte visible.");
+  }
+
+  async function scanImage(file: File) {
+    try {
+      setIsScanning(true);
+      setScanResult(null);
+      setError("");
+      setScanStatus("Analyse de la carte en cours...");
+      setScanPreview(URL.createObjectURL(file));
+
+      const tesseract = await loadTesseract();
+      const worker = await tesseract.createWorker("eng");
+      const result = await worker.recognize(file);
+      await worker.terminate();
+
+      const card = await findCardFromOcr(result.data.text);
+      setScanResult(card);
+      setScanStatus(`Carte reconnue : ${card.name}`);
+    } catch (err) {
+      setScanStatus(err instanceof Error ? err.message : "Reconnaissance impossible.");
+    } finally {
+      setIsScanning(false);
+    }
+  }
+
+  function confirmScannedCard() {
+    if (!scanResult) return;
+    addCardToCollection(scanResult, scanFolder, scanQuantity);
+    setShowScanModal(false);
+    setScanPreview("");
+    setScanStatus("");
+    setScanResult(null);
+    setScanQuantity(1);
+  }
+
   if (!hasLoaded) {
     return (
-      <main className="page">
-        <section className="container-app pb-24">
-          <p className="text-muted">Chargement...</p>
+      <main className="min-h-screen bg-[#101116] text-white">
+        <section className="mx-auto max-w-5xl px-4 py-10 pb-28">
+          <p className="text-white/60">Chargement...</p>
         </section>
       </main>
     );
   }
 
   return (
-    <main className="page">
-      <section className="container-app pb-28">
-        <header>
-          <Link href="/" className="text-3xl font-black">
-            ←
-          </Link>
-
-          <div className="mt-6 overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] via-white/[0.04] to-black/30 p-5 shadow-2xl">
-            <div className="flex items-center justify-between gap-5">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold uppercase tracking-[0.28em] text-muted">
-                  ManaForge
-                </p>
-
-                <h1 className="mt-2 text-4xl font-black text-accent">
-                  Collection
-                </h1>
-
-                <p className="mt-2 text-sm text-muted">
-                  Tes cartes, tes dossiers, ta valeur totale et ton suivi
-                  fullset.
-                </p>
-              </div>
-
-              <CircularValue
-                value={globalStats.totalValue}
-                label="Valeur totale"
-                caption={`${globalStats.totalCards} cartes`}
-                segments={folderSummaries}
-              />
-            </div>
-          </div>
-        </header>
-
-        {!openedFolder && (
-          <section className="mt-7">
-            <div className="mb-4 flex items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
-                  Bibliothèque
-                </p>
-                <h2 className="mt-1 text-2xl font-black">Mes dossiers</h2>
-                <p className="mt-1 text-sm text-muted">
-                  Une vue façon classeur : valeur, quantité et aperçu des
-                  cartes.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setShowFolderModal(true)}
-                className="hidden items-center gap-2 rounded-2xl border border-yellow-300/30 bg-yellow-400 px-4 py-3 text-sm font-black text-black shadow-xl shadow-yellow-500/10 transition hover:scale-[1.02] sm:flex"
-              >
-                <span aria-hidden="true">📁</span>
-                Nouveau
-              </button>
-            </div>
-
-            <div
-              className={
-                viewMode === "grid"
-                  ? "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
-                  : "grid gap-3"
-              }
-            >
-              {folderSummaries.map((folder) => (
-                <FolderCard
-                  key={folder.name}
-                  folder={folder}
-                  viewMode={viewMode}
-                  formatCurrency={formatCurrency}
-                  onColorChange={(color) =>
-                    setFolderColors((current) => ({
-                      ...current,
-                      [folder.name]: color,
-                    }))
-                  }
-                  onOpen={() => {
-                    setOpenedFolder(folder.name);
-                    setFolderFilter(folder.name);
-                  }}
-                  onDelete={() => deleteFolder(folder.name)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {openedFolder && (
-          <section className="mt-6">
-            <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-4">
-              <button
-                onClick={() => {
-                  setOpenedFolder(null);
-                  setFolderFilter("Toutes");
-                  setSearch("");
-                  setSetFilter("Toutes");
-                }}
-                className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white hover:bg-white/15"
-              >
-                ← Retour aux dossiers
-              </button>
-
-              <div className="mt-5 flex items-end justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-xs font-black uppercase tracking-[0.25em] text-muted">
-                    Dossier ouvert
-                  </p>
-                  <h2 className="mt-1 truncate text-3xl font-black text-accent">
-                    {openedFolder}
-                  </h2>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setScanFolder(openedFolder);
-                    setShowScanModal(true);
-                  }}
-                  className="rounded-2xl border border-yellow-300/30 bg-yellow-400 px-4 py-3 text-sm font-black text-black shadow-lg shadow-yellow-500/10"
-                >
-                  📷 Scanner
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-3 gap-3">
-              <StatCard label="Cartes" value={stats.totalCards} />
-              <StatCard label="Uniques" value={stats.uniqueCards} />
-              <StatCard label="Valeur" value={formatCurrency(stats.totalValue)} />
-            </div>
-
-            <div className="mt-4 grid gap-3 rounded-3xl border border-white/10 bg-white/[0.04] p-3 sm:grid-cols-[1fr_auto_auto]">
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Rechercher dans ce dossier"
-                className="input-premium"
-              />
-
-              <select
-                value={setFilter}
-                onChange={(event) => setSetFilter(event.target.value)}
-                className="input-premium"
-              >
-                {extensions.map((extension) => (
-                  <option key={extension} value={extension}>
-                    {extension}
-                  </option>
-                ))}
-              </select>
-
-              <div className="inline-flex rounded-2xl border border-white/10 bg-black/20 p-1">
-                <button
-                  onClick={() => setViewMode("grid")}
-                  className={`rounded-xl px-3 py-2 text-sm font-black transition ${
-                    viewMode === "grid"
-                      ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
-                      : "!text-white/70 hover:bg-white/10 hover:!text-white"
-                  }`}
-                >
-                  ⊞
-                </button>
-
-                <button
-                  onClick={() => setViewMode("list")}
-                  className={`rounded-xl px-3 py-2 text-sm font-black transition ${
-                    viewMode === "list"
-                      ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
-                      : "!text-white/70 hover:bg-white/10 hover:!text-white"
-                  }`}
-                >
-                  ☰
-                </button>
-              </div>
-            </div>
-
-            <div
-              className={
-                viewMode === "grid"
-                  ? "mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3"
-                  : "mt-5 grid gap-3"
-              }
-            >
-              {visibleCards.length === 0 ? (
-                <div className="card-soft col-span-2 p-5 text-center text-muted">
-                  Ce dossier est vide.
-                </div>
-              ) : (
-                visibleCards.map((card) =>
-                  viewMode === "grid" ? (
-                    <CardGridItem
-                      key={card.id}
-                      card={card}
-                      onMinus={() => updateQuantity(card.id, -1)}
-                      onPlus={() => updateQuantity(card.id, 1)}
-                      onDelete={() => deleteCard(card.id)}
-                    />
-                  ) : (
-                    <CardListItem
-                      key={card.id}
-                      card={card}
-                      folders={folders}
-                      onMinus={() => updateQuantity(card.id, -1)}
-                      onPlus={() => updateQuantity(card.id, 1)}
-                      onDelete={() => deleteCard(card.id)}
-                      onFolderChange={(folder) => updateCardFolder(card.id, folder)}
-                    />
-                  ),
-                )
-              )}
-            </div>
-          </section>
-        )}
-
-        {!openedFolder && (
-          <>
-        <div className="mt-8 grid grid-cols-3 gap-3">
-          <StatCard label="Cartes" value={stats.totalCards} />
-          <StatCard label="Uniques" value={stats.uniqueCards} />
-          <StatCard label="Valeur" value={formatCurrency(stats.totalValue)} />
-        </div>
-
-        <div className="mt-4 inline-flex rounded-2xl border border-white/10 bg-white/[0.05] p-1">
-          <button
-            onClick={() => setViewMode("grid")}
-            className={`rounded-xl px-4 py-2 text-sm font-black transition ${
-              viewMode === "grid"
-                ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
-                : "!text-white/70 hover:bg-white/10 hover:!text-white"
-            }`}
-          >
-            ⊞ Grille
-          </button>
-
-          <button
-            onClick={() => setViewMode("list")}
-            className={`rounded-xl px-4 py-2 text-sm font-black transition ${
-              viewMode === "list"
-                ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
-                : "!text-white/70 hover:bg-white/10 hover:!text-white"
-            }`}
-          >
-            ☰ Liste
-          </button>
-        </div>
-
-        <div className="mt-6 card-premium p-5">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-black">Ajouter une carte</h2>
-            <button
-              onClick={() => setShowScanModal(true)}
-              className="rounded-2xl border border-yellow-300/30 bg-yellow-400 px-4 py-2 text-sm font-black text-black shadow-lg shadow-yellow-500/10"
-            >
-              📷 Scanner
-            </button>
-          </div>
-
-          <div className="mt-5 space-y-3">
-            <div className="relative">
-              <input
-                value={cardName}
-                onChange={(event) => setCardName(event.target.value)}
-                placeholder="Sol Ring, Atraxa, Cyclonic Rift..."
-                className="input-premium"
-              />
-
-              {suggestions.length > 0 && (
-                <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#09090d] shadow-2xl">
-                  {suggestions.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      onClick={() => {
-                        setCardName(suggestion);
-                        setSuggestions([]);
-                      }}
-                      className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-[1fr_auto] gap-3">
-              <input
-                type="number"
-                min={1}
-                value={quantity}
-                onChange={(event) =>
-                  setQuantity(Math.max(1, Number(event.target.value)))
-                }
-                className="input-premium"
-              />
-
-              <button
-                onClick={searchPrints}
-                disabled={isSearching}
-                className="btn-soft px-5 disabled:opacity-50"
-              >
-                {isSearching ? "..." : "Éditions"}
-              </button>
-            </div>
-
-            {printOptions.length > 0 && (
-              <div className="rounded-2xl bg-black/20 p-3">
-                <p className="mb-3 text-xs font-black uppercase tracking-wider text-muted">
-                  Choisir l’édition
-                </p>
-
-                <select
-                  value={selectedPrintId}
-                  onChange={(event) => setSelectedPrintId(event.target.value)}
-                  className="input-premium"
-                >
-                  {printOptions.map((card) => (
-                    <option key={card.id} value={card.id}>
-                      {card.set_name} · #{card.collector_number} · {card.rarity}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  onClick={addSelectedPrint}
-                  disabled={isAdding}
-                  className="btn-primary mt-3 w-full disabled:opacity-50"
-                >
-                  {isAdding ? "Ajout..." : "Ajouter cette impression"}
-                </button>
-              </div>
-            )}
-
-            <select
-              value={selectedFolder}
-              onChange={(event) => setSelectedFolder(event.target.value)}
-              className="input-premium"
-            >
-              {folders
-                .filter((folder) => folder !== "Toutes")
-                .map((folder) => (
-                  <option key={folder} value={folder}>
-                    {folder}
-                  </option>
-                ))}
-            </select>
-
-            {error && (
-              <p className="rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">
-                {error}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-6 card-premium p-5">
-          <h2 className="text-xl font-black">Fullset</h2>
-
-          <p className="mt-1 text-sm text-muted">
-            Entre un code d’édition : MH3, LTR, FIN, DFT...
-          </p>
-
-          <div className="mt-4 grid grid-cols-[1fr_auto] gap-3">
-            <input
-              value={fullsetCode}
-              onChange={(event) => setFullsetCode(event.target.value)}
-              placeholder="mh3"
-              className="input-premium uppercase"
-            />
-
-            <button
-              onClick={loadFullset}
-              disabled={isLoadingFullset}
-              className="btn-primary px-5 disabled:opacity-50"
-            >
-              {isLoadingFullset ? "..." : "Scan"}
-            </button>
-          </div>
-
-          {fullsetCards.length > 0 && (
-            <div className="mt-5 rounded-2xl bg-black/20 p-4">
-              <div className="flex items-center justify-between">
-                <p className="font-black">
-                  {fullsetProgress.owned}/{fullsetProgress.total}
-                </p>
-
-                <p className="font-black text-accent">
-                  {fullsetProgress.percent}%
-                </p>
-              </div>
-
-              <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
-                <div
-                  className="h-full rounded-full bg-accent"
-                  style={{ width: `${fullsetProgress.percent}%` }}
-                />
-              </div>
-
-              <h3 className="mt-5 font-black">Cartes manquantes</h3>
-
-              <div className="mt-3 max-h-60 overflow-y-auto space-y-2">
-                {fullsetProgress.missing.slice(0, 80).map((card) => (
-                  <div
-                    key={card.id}
-                    className="flex justify-between rounded-xl bg-white/5 p-3 text-sm"
-                  >
-                    <span>{card.name}</span>
-                    <span className="text-muted">#{card.collector_number}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 card-soft p-4">
-          <div className="space-y-3">
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Rechercher une carte"
-              className="input-premium"
-            />
-
-            <div className="grid grid-cols-2 gap-3">
-              <select
-                value={folderFilter}
-                onChange={(event) => setFolderFilter(event.target.value)}
-                className="input-premium"
-              >
-                {folders.map((folder) => (
-                  <option key={folder} value={folder}>
-                    {folder}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={setFilter}
-                onChange={(event) => setSetFilter(event.target.value)}
-                className="input-premium"
-              >
-                {extensions.map((extension) => (
-                  <option key={extension} value={extension}>
-                    {extension}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        </>
+    <main className="min-h-screen bg-[#101116] text-white">
+      <section className="mx-auto max-w-5xl px-4 pb-28 pt-8">
+        {!openedFolder ? (
+          <CollectionHome
+            globalStats={globalStats}
+            folderSummaries={folderSummaries}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            onOpenFolder={(folder) => {
+              setOpenedFolder(folder);
+              setSearch("");
+              setSetFilter("Toutes");
+            }}
+            onCreateFolder={() => setShowFolderModal(true)}
+            onDeleteFolder={deleteFolder}
+            onColorChange={(folder, color) => setFolderColors((current) => ({ ...current, [folder]: color }))}
+          />
+        ) : (
+          <FolderView
+            folder={openedFolder}
+            summary={openedFolderSummary}
+            cards={visibleCards}
+            stats={openedStats}
+            search={search}
+            setSearch={setSearch}
+            extensions={extensions}
+            setFilter={setFilter}
+            setSetFilter={setSetFilter}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            onBack={() => setOpenedFolder(null)}
+            onScan={() => {
+              setScanFolder(openedFolder);
+              setShowScanModal(true);
+            }}
+            onAdd={() => {
+              setSelectedFolder(openedFolder);
+              setShowAddModal(true);
+            }}
+            onMinus={(id) => updateQuantity(id, -1)}
+            onPlus={(id) => updateQuantity(id, 1)}
+            onDelete={deleteCard}
+          />
         )}
       </section>
 
-      {!openedFolder && (
-      <button
-        onClick={() => setShowFolderModal(true)}
-        className="fixed bottom-24 right-5 z-50 flex h-16 w-16 items-center justify-center rounded-full border border-yellow-200/60 bg-yellow-400 text-3xl shadow-2xl shadow-yellow-500/20 ring-4 ring-yellow-400/10 transition hover:scale-105 active:scale-95"
-        aria-label="Créer un dossier"
-      >
-        <span aria-hidden="true">📁</span>
-      </button>
+      <div className="fixed bottom-24 right-4 z-40 flex flex-col gap-3">
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f59e0b] text-2xl shadow-2xl shadow-orange-500/30 ring-4 ring-white/10 transition active:scale-95"
+          aria-label="Ajouter une carte"
+        >
+          🎴
+        </button>
+        <button
+          onClick={() => {
+            setScanFolder(openedFolder || "Non classé");
+            setShowScanModal(true);
+          }}
+          className="flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-black/50 text-2xl shadow-2xl backdrop-blur transition active:scale-95"
+          aria-label="Scanner une carte"
+        >
+          ⛶
+        </button>
+      </div>
+
+      {showFolderModal && (
+        <FolderModal
+          newFolder={newFolder}
+          setNewFolder={setNewFolder}
+          newFolderColor={newFolderColor}
+          setNewFolderColor={setNewFolderColor}
+          onClose={() => setShowFolderModal(false)}
+          onCreate={() => {
+            createFolder();
+            setShowFolderModal(false);
+          }}
+        />
+      )}
+
+      {showAddModal && (
+        <AddCardModal
+          folders={folders}
+          cardName={cardName}
+          setCardName={setCardName}
+          quantity={quantity}
+          setQuantity={setQuantity}
+          selectedFolder={selectedFolder}
+          setSelectedFolder={setSelectedFolder}
+          suggestions={suggestions}
+          setSuggestions={setSuggestions}
+          printOptions={printOptions}
+          selectedPrintId={selectedPrintId}
+          setSelectedPrintId={setSelectedPrintId}
+          isSearching={isSearching}
+          isAdding={isAdding}
+          error={error}
+          onSearch={searchPrints}
+          onAdd={addSelectedPrint}
+          onClose={() => setShowAddModal(false)}
+        />
       )}
 
       {showScanModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0f0f15] p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
-                  Scan carte
-                </p>
-                <h2 className="mt-1 text-2xl font-black">Ajouter par numéro</h2>
-                <p className="mt-2 text-sm text-muted">
-                  Prends la carte en photo, puis renseigne le code d’extension et le numéro en bas de carte.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setShowScanModal(false)}
-                className="rounded-2xl bg-white/10 px-3 py-2 font-black"
-                aria-label="Fermer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-3xl border border-dashed border-white/15 bg-black/20 p-5 text-center transition hover:bg-white/[0.06]">
-              {scanPreview ? (
-                <img src={scanPreview} alt="Carte scannée" className="max-h-64 rounded-2xl object-contain" />
-              ) : (
-                <>
-                  <span className="text-4xl">📷</span>
-                  <span className="mt-2 text-sm font-bold text-muted">Ouvrir la caméra</span>
-                </>
-              )}
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  setScanPreview(URL.createObjectURL(file));
-                  void recognizeCardTextFromImage(file);
-                }}
-              />
-            </label>
-
-            {scanStatus && (
-              <p className="mt-3 rounded-2xl bg-white/[0.06] p-3 text-xs font-bold text-muted">
-                {isRecognizingScan ? "⏳ " : ""}{scanStatus}
-              </p>
-            )}
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <input
-                value={scanSetCode}
-                onChange={(event) => setScanSetCode(event.target.value)}
-                placeholder="Code : mh3"
-                className="input-premium uppercase"
-              />
-              <input
-                value={scanCollectorNumber}
-                onChange={(event) => setScanCollectorNumber(event.target.value)}
-                placeholder="N° : 123"
-                className="input-premium"
-              />
-            </div>
-
-            <div className="mt-3 grid grid-cols-[0.7fr_1.3fr] gap-3">
-              <input
-                type="number"
-                min={1}
-                value={scanQuantity}
-                onChange={(event) => setScanQuantity(Math.max(1, Number(event.target.value)))}
-                className="input-premium"
-              />
-              <select
-                value={scanFolder}
-                onChange={(event) => setScanFolder(event.target.value)}
-                className="input-premium"
-              >
-                {folders
-                  .filter((folder) => folder !== "Toutes")
-                  .map((folder) => (
-                    <option key={folder} value={folder}>
-                      {folder}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <button
-              onClick={addScannedCard}
-              disabled={isScanAdding}
-              className="btn-primary mt-4 w-full disabled:opacity-50"
-            >
-              {isScanAdding ? "Ajout..." : "Ajouter la carte scannée"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showFolderModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0f0f15] p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-2xl shadow-lg shadow-yellow-500/10">
-                    📁
-                  </div>
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
-                      Collection
-                    </p>
-                    <h2 className="mt-1 text-2xl font-black">
-                      Nouveau dossier
-                    </h2>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowFolderModal(false)}
-                className="rounded-2xl bg-white/10 px-3 py-2 font-black"
-                aria-label="Fermer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <input
-              value={newFolder}
-              onChange={(event) => setNewFolder(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  createFolder();
-                  setShowFolderModal(false);
-                }
-              }}
-              placeholder="Nom du dossier"
-              className="input-premium mt-5"
-              autoFocus
-            />
-
-            <div className="mt-5">
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-muted">
-                Couleur du dossier
-              </p>
-              <div className="mt-3 grid grid-cols-8 gap-2">
-                {FOLDER_COLOR_PALETTE.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => setNewFolderColor(color)}
-                    className={`h-8 rounded-full border-2 transition ${
-                      newFolderColor === color
-                        ? "scale-110 border-white"
-                        : "border-white/10"
-                    }`}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Choisir la couleur ${color}`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => {
-                  setNewFolder("");
-                  setShowFolderModal(false);
-                }}
-                className="btn-soft"
-              >
-                Annuler
-              </button>
-
-              <button
-                onClick={() => {
-                  createFolder();
-                  setShowFolderModal(false);
-                }}
-                className="btn-primary"
-              >
-                Créer
-              </button>
-            </div>
-          </div>
-        </div>
+        <ScanModal
+          folders={folders}
+          scanFolder={scanFolder}
+          setScanFolder={setScanFolder}
+          scanQuantity={scanQuantity}
+          setScanQuantity={setScanQuantity}
+          scanPreview={scanPreview}
+          scanStatus={scanStatus}
+          scanResult={scanResult}
+          isScanning={isScanning}
+          fileInputRef={fileInputRef}
+          onFile={(file) => void scanImage(file)}
+          onConfirm={confirmScannedCard}
+          onClose={() => setShowScanModal(false)}
+        />
       )}
 
       <BottomNav />
@@ -1339,365 +552,476 @@ export default function CollectionPage() {
   );
 }
 
-function CircularValue({
-  value,
-  label,
-  caption,
-  segments,
+function CollectionHome({
+  globalStats,
+  folderSummaries,
+  viewMode,
+  setViewMode,
+  onOpenFolder,
+  onCreateFolder,
+  onDeleteFolder,
+  onColorChange,
 }: {
-  value: number;
-  label: string;
-  caption: string;
-  segments: {
-    name: string;
-    totalValue: number;
-    color: string;
-  }[];
+  globalStats: { totalCards: number; uniqueCards: number; totalValue: number };
+  folderSummaries: FolderSummary[];
+  viewMode: "grid" | "list";
+  setViewMode: (mode: "grid" | "list") => void;
+  onOpenFolder: (folder: string) => void;
+  onCreateFolder: () => void;
+  onDeleteFolder: (folder: string) => void;
+  onColorChange: (folder: string, color: string) => void;
 }) {
-  const displayValue = new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(value);
-
-  const positiveSegments = segments.filter((segment) => segment.totalValue > 0);
-
-  const conicParts = positiveSegments.map((segment, index) => {
-    const start = positiveSegments
-      .slice(0, index)
-      .reduce(
-        (sum, currentSegment) =>
-          sum + (value > 0 ? (currentSegment.totalValue / value) * 360 : 0),
-        0,
-      );
-    const end = start + (value > 0 ? (segment.totalValue / value) * 360 : 0);
-
-    return `${segment.color} ${start}deg ${end}deg`;
-  });
-
-  const conicGradient =
-    conicParts.length > 0
-      ? `conic-gradient(${conicParts.join(", ")})`
-      : "conic-gradient(#facc15 0 360deg)";
-
-  const topSegments = positiveSegments
-    .sort((a, b) => b.totalValue - a.totalValue)
-    .slice(0, 3);
-
   return (
-    <div className="relative shrink-0">
-      <div className="absolute inset-0 rounded-full bg-accent/20 blur-2xl" />
-      <div
-        className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full border border-white/15 bg-black/50 p-3 text-center shadow-2xl"
-        style={{
-          background: `radial-gradient(circle at center, rgba(9,9,13,0.96) 0 58%, transparent 59%), ${conicGradient}`,
-        }}
-      >
-        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted">
-          {label}
-        </p>
-        <p className="mt-1 max-w-[96px] truncate text-xl font-black text-white">
-          {displayValue}
-        </p>
-        <p className="mt-1 text-[10px] font-bold text-muted">{caption}</p>
+    <>
+      <header className="relative">
+        <div className="flex items-center justify-between">
+          <Link href="/" className="flex h-10 w-10 items-center justify-center rounded-full bg-black/30 text-xl font-black">
+            ←
+          </Link>
+          <h1 className="text-lg font-black">Collection</h1>
+          <button className="flex h-10 w-10 items-center justify-center rounded-full bg-black/30 text-xl font-black">...</button>
+        </div>
+
+        <div className="mt-5 flex justify-center">
+          <CircularValue value={globalStats.totalValue} caption={`${globalStats.totalCards} cartes`} segments={folderSummaries} />
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 border-b border-white/10 text-sm font-black">
+          <button className="border-b-2 border-[#f59e0b] pb-3 text-[#f59e0b]">▣ Collection</button>
+          <button className="pb-3 text-white/70">▤ Lists</button>
+        </div>
+      </header>
+
+      <div className="mt-4 grid gap-2">
+        <button className="flex items-center justify-between rounded-xl bg-white/[0.08] px-4 py-3 font-black">
+          <span>🗃️ Toutes les collections</span>
+          <span className="text-white/50">›</span>
+        </button>
+        <button className="flex items-center justify-between rounded-xl bg-white/[0.08] px-4 py-3 font-black">
+          <span>🃏 Decks</span>
+          <span className="text-white/50">›</span>
+        </button>
       </div>
 
-      {topSegments.length > 0 && (
-        <div className="mt-3 space-y-1 rounded-2xl border border-white/10 bg-black/25 p-2">
-          {topSegments.map((segment) => (
-            <div key={segment.name} className="flex items-center gap-2 text-[10px] font-bold text-muted">
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: segment.color }}
-              />
-              <span className="max-w-[72px] truncate">{segment.name}</span>
-              <span className="ml-auto text-white">
-                {Math.round((segment.totalValue / value) * 100)}%
-              </span>
-            </div>
-          ))}
+      <div className="mt-5 flex items-center gap-2 rounded-xl bg-black/25 px-3 py-2 text-white/60">
+        <span>⌕</span>
+        <input placeholder="Search binders" className="w-full bg-transparent text-sm outline-none placeholder:text-white/40" />
+      </div>
+
+      <div className="mt-6 flex items-center justify-between">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Mes dossiers</p>
+        <div className="flex items-center gap-2">
+          <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
+          <button onClick={onCreateFolder} className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/30 text-[#f59e0b]">＋</button>
         </div>
-      )}
+      </div>
+
+      <div className={viewMode === "grid" ? "mt-3 grid grid-cols-2 gap-3 md:grid-cols-3" : "mt-3 grid gap-3"}>
+        {folderSummaries.map((folder) => (
+          <BinderCard
+            key={folder.name}
+            folder={folder}
+            compact={viewMode === "grid"}
+            onOpen={() => onOpenFolder(folder.name)}
+            onDelete={() => onDeleteFolder(folder.name)}
+            onColorChange={(color) => onColorChange(folder.name, color)}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function CircularValue({ value, caption, segments }: { value: number; caption: string; segments: FolderSummary[] }) {
+  const positiveSegments = segments.filter((segment) => segment.totalValue > 0);
+  const conicParts = positiveSegments.map((segment, index) => {
+    const start = positiveSegments.slice(0, index).reduce((sum, current) => sum + (value > 0 ? (current.totalValue / value) * 360 : 0), 0);
+    const end = start + (value > 0 ? (segment.totalValue / value) * 360 : 0);
+    return `${segment.color} ${start}deg ${end}deg`;
+  });
+  const conicGradient = conicParts.length > 0 ? `conic-gradient(${conicParts.join(", ")})` : "conic-gradient(#f59e0b 0 360deg)";
+
+  return (
+    <div
+      className="flex h-40 w-40 flex-col items-center justify-center rounded-full text-center shadow-2xl"
+      style={{ background: `radial-gradient(circle at center, #101116 0 58%, transparent 59%), ${conicGradient}` }}
+    >
+      <p className="text-xs font-black text-emerald-400">+0,00 €</p>
+      <p className="mt-1 text-2xl font-black">{formatCurrency(value, 2)}</p>
+      <p className="text-xs font-bold text-white/60">{caption}</p>
     </div>
   );
 }
-function FolderCard({
+
+function BinderCard({
   folder,
-  viewMode,
-  formatCurrency,
-  onColorChange,
+  compact,
   onOpen,
   onDelete,
+  onColorChange,
 }: {
-  folder: {
-    name: string;
-    uniqueCards: number;
-    totalQuantity: number;
-    totalValue: number;
-    color: string;
-  };
-  viewMode: "grid" | "list";
-  formatCurrency: (value: number) => string;
-  onColorChange: (color: string) => void;
+  folder: FolderSummary;
+  compact: boolean;
   onOpen: () => void;
   onDelete: () => void;
+  onColorChange: (color: string) => void;
 }) {
   const isDefaultFolder = folder.name === "Non classé";
+  const background = folder.cover
+    ? `linear-gradient(90deg, rgba(16,17,22,.96), rgba(16,17,22,.58)), url(${folder.cover})`
+    : `linear-gradient(90deg, ${folder.color}33, rgba(255,255,255,.05))`;
 
-  if (viewMode === "list") {
+  if (compact) {
     return (
-      <div className="group relative rounded-3xl border border-white/10 bg-white/[0.055] p-3 transition hover:border-yellow-300/40 hover:bg-white/[0.08]">
-        <button onClick={onOpen} className="flex w-full items-center gap-3 text-left">
-          <div
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-2xl shadow-lg"
-            style={{ backgroundColor: folder.color }}
-          >
-            📁
+      <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.055] p-3">
+        <button onClick={onOpen} className="w-full text-left">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl text-2xl" style={{ backgroundColor: folder.color }}>
+              📁
+            </div>
+            <span className="text-white/60">...</span>
           </div>
-
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black">{folder.name}</p>
-            <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-muted">
-              {folder.totalQuantity} cartes · {folder.uniqueCards} uniques
-            </p>
-          </div>
-
-          <p className="shrink-0 text-sm font-black text-accent">
-            {formatCurrency(folder.totalValue)}
-          </p>
+          <p className="mt-3 truncate font-black">{folder.name}</p>
+          <p className="text-xs font-bold text-white/70">{folder.totalQuantity} cartes</p>
+          <p className="mt-1 text-sm font-black">{formatCurrency(folder.totalValue, 2)}</p>
         </button>
-
-        <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3">
-          <div className="flex gap-1.5">
-            {FOLDER_COLOR_PALETTE.map((color) => (
-              <button
-                key={color}
-                type="button"
-                onClick={() => onColorChange(color)}
-                className={`h-4 w-4 rounded-full border transition ${
-                  folder.color === color ? "scale-110 border-white" : "border-white/10"
-                }`}
-                style={{ backgroundColor: color }}
-                aria-label={`Couleur ${color}`}
-              />
-            ))}
-          </div>
-
-          {!isDefaultFolder && (
-            <button
-              onClick={onDelete}
-              className="rounded-xl bg-red-500/10 px-2.5 py-1.5 text-xs font-black text-red-300"
-            >
-              Supprimer
-            </button>
-          )}
-        </div>
+        <ColorDots color={folder.color} onColorChange={onColorChange} />
+        {!isDefaultFolder && (
+          <button onClick={onDelete} className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-1 text-xs text-red-300 opacity-0 group-hover:opacity-100">
+            ✕
+          </button>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="group relative rounded-3xl border border-white/10 bg-white/[0.055] p-3 transition hover:-translate-y-0.5 hover:border-yellow-300/40 hover:bg-white/[0.08]">
-      <button onClick={onOpen} className="w-full text-left">
-        <div className="flex items-center gap-3">
-          <div
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-2xl shadow-lg ring-2 ring-white/10"
-            style={{ backgroundColor: folder.color }}
-          >
-            📁
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black">{folder.name}</p>
-            <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-muted">
-              {folder.totalQuantity} cartes
-            </p>
-          </div>
+    <div className="group relative overflow-hidden rounded-xl border border-white/10 bg-cover bg-center" style={{ backgroundImage: background }}>
+      <span className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: folder.color }} />
+      <button onClick={onOpen} className="flex min-h-20 w-full items-center justify-between gap-3 px-4 py-3 text-left">
+        <div>
+          <p className="font-black">{folder.name}</p>
+          <p className="text-xs font-bold text-white/70">{folder.totalQuantity} cartes · {folder.uniqueCards} uniques</p>
         </div>
-
-        <div className="mt-3 flex items-end justify-between gap-3">
-          <p className="text-lg font-black text-accent">
-            {formatCurrency(folder.totalValue)}
-          </p>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted">
-            {folder.uniqueCards} uniques
-          </p>
+        <div className="text-right">
+          <p className="font-black">{formatCurrency(folder.totalValue, 2)}</p>
+          <p className="text-xs text-emerald-400">+0,00 €</p>
         </div>
       </button>
+      <div className="px-4 pb-2"><ColorDots color={folder.color} onColorChange={onColorChange} /></div>
+      {!isDefaultFolder && (
+        <button onClick={onDelete} className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-1 text-xs text-red-300 opacity-0 group-hover:opacity-100">
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
 
-      <div className="mt-3 flex gap-1.5 overflow-hidden border-t border-white/10 pt-3">
-        {FOLDER_COLOR_PALETTE.map((color) => (
-          <button
-            key={color}
-            type="button"
-            onClick={() => onColorChange(color)}
-            className={`h-3.5 w-3.5 shrink-0 rounded-full border transition ${
-              folder.color === color ? "scale-110 border-white" : "border-white/10"
-            }`}
-            style={{ backgroundColor: color }}
-            aria-label={`Couleur ${color}`}
-          />
+function ColorDots({ color, onColorChange }: { color: string; onColorChange: (color: string) => void }) {
+  return (
+    <div className="mt-2 flex gap-1.5">
+      {FOLDER_COLOR_PALETTE.map((item) => (
+        <button
+          key={item}
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onColorChange(item);
+          }}
+          className={`h-3 w-3 rounded-full border ${color === item ? "border-white" : "border-white/10"}`}
+          style={{ backgroundColor: item }}
+          aria-label={`Couleur ${item}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FolderView({
+  folder,
+  summary,
+  cards,
+  stats,
+  search,
+  setSearch,
+  extensions,
+  setFilter,
+  setSetFilter,
+  viewMode,
+  setViewMode,
+  onBack,
+  onScan,
+  onAdd,
+  onMinus,
+  onPlus,
+  onDelete,
+}: {
+  folder: string;
+  summary?: FolderSummary;
+  cards: CollectionCard[];
+  stats: { totalCards: number; uniqueCards: number; totalValue: number };
+  search: string;
+  setSearch: (value: string) => void;
+  extensions: string[];
+  setFilter: string;
+  setSetFilter: (value: string) => void;
+  viewMode: "grid" | "list";
+  setViewMode: (mode: "grid" | "list") => void;
+  onBack: () => void;
+  onScan: () => void;
+  onAdd: () => void;
+  onMinus: (id: number) => void;
+  onPlus: (id: number) => void;
+  onDelete: (id: number) => void;
+}) {
+  return (
+    <>
+      <header>
+        <div className="flex items-center justify-between">
+          <button onClick={onBack} className="flex h-10 w-10 items-center justify-center rounded-full bg-black/30 text-xl font-black">←</button>
+          <button className="flex h-10 w-10 items-center justify-center rounded-full bg-black/30 text-xl font-black">...</button>
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl text-3xl" style={{ backgroundColor: summary?.color || "#f59e0b" }}>📁</div>
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-black">{folder}</h1>
+            <p className="text-sm font-bold text-white/60">{stats.totalCards} cartes · {formatCurrency(stats.totalValue, 2)}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="mt-5 grid grid-cols-[1fr_auto] gap-2">
+        <div className="flex items-center gap-2 rounded-xl bg-black/25 px-3 py-2 text-white/60">
+          <span>⌕</span>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Rechercher dans ${folder}`} className="w-full bg-transparent text-sm outline-none placeholder:text-white/40" />
+        </div>
+        <button className="rounded-xl bg-black/25 px-4 text-white/80">≡</button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+        <select value={setFilter} onChange={(event) => setSetFilter(event.target.value)} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm font-bold text-white outline-none">
+          {extensions.map((extension) => <option key={extension} value={extension}>{extension}</option>)}
+        </select>
+        <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <MiniStat label="Cartes" value={stats.totalCards} />
+        <MiniStat label="Uniques" value={stats.uniqueCards} />
+        <MiniStat label="Valeur" value={formatCurrency(stats.totalValue, 2)} />
+      </div>
+
+      <div className="mt-5 flex gap-2">
+        <button onClick={onAdd} className="flex-1 rounded-xl bg-white/[0.08] px-4 py-3 font-black">＋ Ajouter</button>
+        <button onClick={onScan} className="flex-1 rounded-xl bg-[#f59e0b] px-4 py-3 font-black text-black">⛶ Scanner</button>
+      </div>
+
+      <div className={viewMode === "grid" ? "mt-5 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5" : "mt-5 grid gap-3"}>
+        {cards.length === 0 ? (
+          <div className="col-span-full rounded-2xl border border-white/10 bg-white/[0.05] p-6 text-center text-white/60">Ce dossier est vide.</div>
+        ) : cards.map((card) => viewMode === "grid" ? (
+          <CardTile key={card.id} card={card} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
+        ) : (
+          <CardRow key={card.id} card={card} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
         ))}
       </div>
+    </>
+  );
+}
 
-      {!isDefaultFolder && (
-        <button
-          onClick={onDelete}
-          className="absolute right-2 top-2 rounded-xl bg-black/40 px-2 py-1 text-xs font-black text-red-300 opacity-0 transition group-hover:opacity-100"
-          title="Supprimer le dossier"
-        >
-          ✕
-        </button>
-      )}
+function ViewToggle({ viewMode, setViewMode }: { viewMode: "grid" | "list"; setViewMode: (mode: "grid" | "list") => void }) {
+  return (
+    <div className="inline-flex rounded-xl border border-white/10 bg-black/25 p-1">
+      <button onClick={() => setViewMode("grid")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${viewMode === "grid" ? "bg-[#f59e0b] text-black" : "text-white/70"}`}>Grille</button>
+      <button onClick={() => setViewMode("list")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${viewMode === "list" ? "bg-[#f59e0b] text-black" : "text-white/70"}`}>Liste</button>
     </div>
   );
 }
 
-function CardGridItem({
-  card,
-  onMinus,
-  onPlus,
-  onDelete,
-}: {
-  card: CollectionCard;
-  onMinus: () => void;
-  onPlus: () => void;
-  onDelete: () => void;
-}) {
+function CardTile({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; onMinus: () => void; onPlus: () => void; onDelete: () => void }) {
   return (
-    <div className="card-soft overflow-hidden p-3">
-      {card.image ? (
-        <img
-          src={card.image}
-          alt={card.name}
-          className="aspect-[63/88] w-full rounded-xl object-cover"
-        />
-      ) : (
-        <div className="flex aspect-[63/88] w-full items-center justify-center rounded-xl bg-black/30 text-4xl">
-          🎴
-        </div>
-      )}
-
-      <h3 className="mt-3 line-clamp-1 font-black">{card.name}</h3>
-
-      <p className="text-xs text-muted">
-        {card.setCode?.toUpperCase()} #{card.collectorNumber}
-      </p>
-
-      <p className="mt-1 text-sm font-bold text-accent">
-        x{card.quantity} · {Math.round(card.price * card.quantity * 100) / 100}€
-      </p>
-
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <button onClick={onMinus} className="rounded-xl bg-white/10 py-2">
-          −
-        </button>
-
-        <button onClick={onPlus} className="rounded-xl bg-accent/20 py-2">
-          +
-        </button>
-
-        <button onClick={onDelete} className="rounded-xl bg-red-500/10 py-2">
-          ✕
-        </button>
+    <div className="group relative overflow-hidden rounded-xl bg-white/[0.05] p-1.5">
+      {card.image ? <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" /> : <div className="aspect-[63/88] rounded-lg bg-black/30" />}
+      <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
+      <p className="text-[10px] text-white/60">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
+      <div className="absolute inset-x-1 bottom-8 hidden grid-cols-3 gap-1 group-hover:grid">
+        <button onClick={onMinus} className="rounded bg-black/70 py-1">−</button>
+        <button onClick={onPlus} className="rounded bg-[#f59e0b] py-1 text-black">+</button>
+        <button onClick={onDelete} className="rounded bg-red-500/80 py-1">×</button>
       </div>
     </div>
   );
 }
 
-function CardListItem({
-  card,
+function CardRow({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; onMinus: () => void; onPlus: () => void; onDelete: () => void }) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
+      {card.image ? <img src={card.image} alt={card.name} className="h-20 w-14 rounded-lg object-cover" /> : <div className="h-20 w-14 rounded-lg bg-black/30" />}
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-black">{card.name}</p>
+        <p className="text-xs text-white/60">{card.setCode?.toUpperCase()} #{card.collectorNumber}</p>
+        <p className="mt-1 text-sm font-black">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
+        <div className="mt-2 flex gap-2">
+          <button onClick={onMinus} className="rounded-lg bg-black/30 px-3 py-1">−</button>
+          <button onClick={onPlus} className="rounded-lg bg-[#f59e0b] px-3 py-1 text-black">+</button>
+          <button onClick={onDelete} className="rounded-lg bg-red-500/20 px-3 py-1 text-red-200">×</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.055] p-3 text-center">
+      <p className="font-black text-[#f59e0b]">{value}</p>
+      <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-white/50">{label}</p>
+    </div>
+  );
+}
+
+function FolderModal({
+  newFolder,
+  setNewFolder,
+  newFolderColor,
+  setNewFolderColor,
+  onClose,
+  onCreate,
+}: {
+  newFolder: string;
+  setNewFolder: (value: string) => void;
+  newFolderColor: string;
+  setNewFolderColor: (value: string) => void;
+  onClose: () => void;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur">
+      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#17181f] p-5">
+        <div className="flex items-center justify-between"><h2 className="text-xl font-black">Nouveau dossier</h2><button onClick={onClose}>✕</button></div>
+        <input value={newFolder} onChange={(event) => setNewFolder(event.target.value)} placeholder="Nom du dossier" className="mt-4 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" autoFocus />
+        <div className="mt-4 flex gap-2">{FOLDER_COLOR_PALETTE.map((color) => <button key={color} onClick={() => setNewFolderColor(color)} className={`h-8 w-8 rounded-full border-2 ${newFolderColor === color ? "border-white" : "border-transparent"}`} style={{ backgroundColor: color }} />)}</div>
+        <button onClick={onCreate} className="mt-5 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black">Créer</button>
+      </div>
+    </div>
+  );
+}
+
+function AddCardModal({
   folders,
-  onMinus,
-  onPlus,
-  onDelete,
-  onFolderChange,
+  cardName,
+  setCardName,
+  quantity,
+  setQuantity,
+  selectedFolder,
+  setSelectedFolder,
+  suggestions,
+  setSuggestions,
+  printOptions,
+  selectedPrintId,
+  setSelectedPrintId,
+  isSearching,
+  isAdding,
+  error,
+  onSearch,
+  onAdd,
+  onClose,
 }: {
-  card: CollectionCard;
   folders: string[];
-  onMinus: () => void;
-  onPlus: () => void;
-  onDelete: () => void;
-  onFolderChange: (folder: string) => void;
+  cardName: string;
+  setCardName: (value: string) => void;
+  quantity: number;
+  setQuantity: (value: number) => void;
+  selectedFolder: string;
+  setSelectedFolder: (value: string) => void;
+  suggestions: string[];
+  setSuggestions: (value: string[]) => void;
+  printOptions: ScryfallCard[];
+  selectedPrintId: string;
+  setSelectedPrintId: (value: string) => void;
+  isSearching: boolean;
+  isAdding: boolean;
+  error: string;
+  onSearch: () => void;
+  onAdd: () => void;
+  onClose: () => void;
 }) {
   return (
-    <div className="card-soft p-4">
-      <div className="flex gap-4">
-        {card.image ? (
-          <img
-            src={card.image}
-            alt={card.name}
-            className="h-28 w-20 rounded-xl object-cover"
-          />
-        ) : (
-          <div className="flex h-28 w-20 items-center justify-center rounded-xl bg-black/30 text-2xl">
-            🎴
-          </div>
-        )}
-
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-lg font-black">{card.name}</h3>
-
-          <p className="mt-1 line-clamp-1 text-xs text-muted">
-            {card.typeLine}
-          </p>
-
-          <p className="mt-2 text-xs text-muted">
-            {card.setName} · #{card.collectorNumber} · {card.rarity}
-          </p>
-
-          <p className="mt-2 text-sm font-bold text-accent">
-            {card.price}€ / carte ·{" "}
-            {Math.round(card.price * card.quantity * 100) / 100}€
-          </p>
-
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <button onClick={onMinus} className="btn-soft">
-                −
-              </button>
-
-              <span className="text-xl font-black">x{card.quantity}</span>
-
-              <button onClick={onPlus} className="btn-soft">
-                +
-              </button>
-            </div>
-
-            <button
-              onClick={onDelete}
-              className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-black text-red-300"
-            >
-              Supprimer
-            </button>
-          </div>
-
-          <select
-            value={card.folder || "Non classé"}
-            onChange={(event) => onFolderChange(event.target.value)}
-            className="input-premium mt-3"
-          >
-            {folders
-              .filter((folder) => folder !== "Toutes")
-              .map((folder) => (
-                <option key={folder} value={folder}>
-                  {folder}
-                </option>
-              ))}
-          </select>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur">
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#17181f] p-5">
+        <div className="flex items-center justify-between"><h2 className="text-xl font-black">Ajouter une carte</h2><button onClick={onClose}>✕</button></div>
+        <div className="relative mt-4">
+          <input value={cardName} onChange={(event) => setCardName(event.target.value)} placeholder="Nom de la carte" className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
+          {suggestions.length > 0 && <div className="absolute left-0 right-0 top-full z-10 mt-2 overflow-hidden rounded-xl bg-[#0f1015] shadow-xl">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => { setCardName(suggestion); setSuggestions([]); }} className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10">{suggestion}</button>)}</div>}
         </div>
+        <div className="mt-3 grid grid-cols-[.7fr_1.3fr] gap-2">
+          <input type="number" min={1} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
+          <select value={selectedFolder} onChange={(event) => setSelectedFolder(event.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">{folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select>
+        </div>
+        <button onClick={onSearch} disabled={isSearching} className="mt-3 w-full rounded-xl bg-white/[0.08] py-3 font-black disabled:opacity-50">{isSearching ? "Recherche..." : "Chercher les éditions"}</button>
+        {printOptions.length > 0 && <div className="mt-3 rounded-xl bg-black/25 p-3"><select value={selectedPrintId} onChange={(event) => setSelectedPrintId(event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">{printOptions.map((card) => <option key={card.id} value={card.id}>{card.set_name} · #{card.collector_number} · {card.rarity}</option>)}</select><button onClick={onAdd} disabled={isAdding} className="mt-3 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black disabled:opacity-50">Ajouter</button></div>}
+        {error && <p className="mt-3 rounded-xl bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p>}
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number | string }) {
+function ScanModal({
+  folders,
+  scanFolder,
+  setScanFolder,
+  scanQuantity,
+  setScanQuantity,
+  scanPreview,
+  scanStatus,
+  scanResult,
+  isScanning,
+  fileInputRef,
+  onFile,
+  onConfirm,
+  onClose,
+}: {
+  folders: string[];
+  scanFolder: string;
+  setScanFolder: (value: string) => void;
+  scanQuantity: number;
+  setScanQuantity: (value: number) => void;
+  scanPreview: string;
+  scanStatus: string;
+  scanResult: ScryfallCard | null;
+  isScanning: boolean;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  onFile: (file: File) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-center">
-      <p className="text-2xl font-black text-accent">{value}</p>
-      <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted">
-        {label}
-      </p>
+    <div className="fixed inset-0 z-[100] bg-[#101116] text-white">
+      <div className="mx-auto flex h-full max-w-md flex-col p-4">
+        <div className="flex items-center justify-between"><button onClick={onClose} className="text-2xl">✕</button><h2 className="font-black">Scanner une carte</h2><span className="w-6" /></div>
+        <div className="mt-6 flex flex-1 flex-col items-center justify-center rounded-[2rem] bg-black/25 p-4">
+          <button onClick={() => fileInputRef.current?.click()} className="relative flex aspect-[63/88] w-full max-w-xs items-center justify-center overflow-hidden rounded-3xl border-4 border-white/20 bg-black/40">
+            {scanPreview ? <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain" /> : <span className="text-center text-sm font-bold text-white/60">Positionne la carte dans le cadre<br />puis prends la photo</span>}
+            <span className="absolute left-4 top-4 h-10 w-10 rounded-tl-2xl border-l-4 border-t-4 border-white" />
+            <span className="absolute right-4 top-4 h-10 w-10 rounded-tr-2xl border-r-4 border-t-4 border-white" />
+            <span className="absolute bottom-4 left-4 h-10 w-10 rounded-bl-2xl border-b-4 border-l-4 border-white" />
+            <span className="absolute bottom-4 right-4 h-10 w-10 rounded-br-2xl border-b-4 border-r-4 border-white" />
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); }} />
+          <p className="mt-4 text-center text-sm font-bold text-white/60">{isScanning ? "Analyse OCR en cours..." : scanStatus || "Reconnaissance automatique via OCR + Scryfall"}</p>
+          {scanResult && <div className="mt-4 flex w-full items-center gap-3 rounded-2xl bg-white/[0.06] p-3">{getCardArt(scanResult) && <img src={getCardArt(scanResult)} alt={scanResult.name} className="h-16 w-16 rounded-xl object-cover" />}<div className="min-w-0"><p className="truncate font-black">{scanResult.name}</p><p className="text-xs text-white/60">{scanResult.set_name} · #{scanResult.collector_number}</p><p className="text-sm font-black">{formatCurrency(getCardPrice(scanResult), 2)}</p></div></div>}
+        </div>
+        <div className="mt-4 grid grid-cols-[.7fr_1.3fr] gap-2">
+          <input type="number" min={1} value={scanQuantity} onChange={(event) => setScanQuantity(Math.max(1, Number(event.target.value)))} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
+          <select value={scanFolder} onChange={(event) => setScanFolder(event.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">{folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <button onClick={() => fileInputRef.current?.click()} className="rounded-full border border-white/15 bg-black/30 py-4 text-2xl">🖼️</button>
+          <button onClick={() => fileInputRef.current?.click()} className="rounded-full bg-white py-4 text-2xl text-black">●</button>
+          <button disabled={!scanResult || isScanning} onClick={onConfirm} className="rounded-full border border-white/15 bg-[#f59e0b] py-4 text-2xl text-black disabled:opacity-40">✓</button>
+        </div>
+      </div>
     </div>
   );
 }
