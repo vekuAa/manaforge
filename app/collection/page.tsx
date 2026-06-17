@@ -106,7 +106,9 @@ export default function CollectionPage() {
   const [scanFolder, setScanFolder] = useState("Non classé");
   const [scanQuantity, setScanQuantity] = useState(1);
   const [scanPreview, setScanPreview] = useState("");
+  const [scanStatus, setScanStatus] = useState("");
   const [isScanAdding, setIsScanAdding] = useState(false);
+  const [isRecognizingScan, setIsRecognizingScan] = useState(false);
 
   const [fullsetCode, setFullsetCode] = useState("");
   const [fullsetCards, setFullsetCards] = useState<ScryfallCard[]>([]);
@@ -302,14 +304,18 @@ export default function CollectionPage() {
   }, [cards, fullsetCards, fullsetCode]);
 
   const visibleCards = useMemo(() => {
-    if (openedFolder) {
-      return cards.filter(
-        (card) => (card.folder || "Non classé") === openedFolder,
-      );
-    }
+    if (!openedFolder) return filteredCards;
 
-    return filteredCards;
-  }, [cards, filteredCards, openedFolder]);
+    return cards.filter((card) => {
+      const matchesFolder = (card.folder || "Non classé") === openedFolder;
+      const matchesSearch = card.name
+        .toLowerCase()
+        .includes(search.toLowerCase());
+      const matchesSet = setFilter === "Toutes" || card.setName === setFilter;
+
+      return matchesFolder && matchesSearch && matchesSet;
+    });
+  }, [cards, filteredCards, openedFolder, search, setFilter]);
 
   function getCardImage(card: ScryfallCard) {
     return (
@@ -470,6 +476,62 @@ export default function CollectionPage() {
     }
   }
 
+  async function recognizeCardTextFromImage(file: File) {
+    type DetectedText = { rawValue?: string };
+    type TextDetectorConstructor = new () => {
+      detect: (source: ImageBitmap) => Promise<DetectedText[]>;
+    };
+
+    const textDetector = (window as unknown as {
+      TextDetector?: TextDetectorConstructor;
+    }).TextDetector;
+
+    if (!textDetector) {
+      setScanStatus(
+        "Reconnaissance auto indisponible sur ce navigateur. Entre le code extension et le numéro manuellement.",
+      );
+      return;
+    }
+
+    try {
+      setIsRecognizingScan(true);
+      setScanStatus("Analyse de la photo...");
+
+      const bitmap = await createImageBitmap(file);
+      const detector = new textDetector();
+      const detections = await detector.detect(bitmap);
+      const detectedText = detections
+        .map((item) => item.rawValue || "")
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const collectorMatch = detectedText.match(/(?:^|\s)(\d{1,4})(?:\s*\/\s*\d{1,4})?(?:\s|$)/);
+      const setMatch = detectedText.match(/\b[A-Z0-9]{2,5}\b/g);
+      const ignoredTokens = new Set(["EN", "FR", "JP", "DE", "ES", "IT", "PT"]);
+      const cleanSet = setMatch
+        ?.find((token) => ignoredTokens.has(token) === false)
+        ?.toLowerCase();
+
+      if (collectorMatch?.[1]) setScanCollectorNumber(collectorMatch[1]);
+      if (cleanSet) setScanSetCode(cleanSet);
+
+      if (collectorMatch?.[1] || cleanSet) {
+        setScanStatus(
+          "Lecture partielle détectée. Vérifie le code et le numéro avant ajout.",
+        );
+      } else {
+        setScanStatus(
+          "Je n’ai pas réussi à lire la carte. Remplis le code extension et le numéro manuellement.",
+        );
+      }
+    } catch {
+      setScanStatus("Erreur pendant la reconnaissance. Remplissage manuel nécessaire.");
+    } finally {
+      setIsRecognizingScan(false);
+    }
+  }
+
   async function addScannedCard() {
     const cleanSet = scanSetCode.trim().toLowerCase();
     const cleanNumber = scanCollectorNumber.trim();
@@ -532,6 +594,7 @@ export default function CollectionPage() {
       setScanCollectorNumber("");
       setScanQuantity(1);
       setScanPreview("");
+      setScanStatus("");
       setShowScanModal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur pendant le scan.");
@@ -703,30 +766,133 @@ export default function CollectionPage() {
         )}
 
         {openedFolder && (
-          <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.06] p-4">
-            <button
-              onClick={() => {
-                setOpenedFolder(null);
-                setFolderFilter("Toutes");
-              }}
-              className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black"
-            >
-              ← Retour aux dossiers
-            </button>
+          <section className="mt-6">
+            <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-4">
+              <button
+                onClick={() => {
+                  setOpenedFolder(null);
+                  setFolderFilter("Toutes");
+                  setSearch("");
+                  setSetFilter("Toutes");
+                }}
+                className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white hover:bg-white/15"
+              >
+                ← Retour aux dossiers
+              </button>
 
-            <div className="mt-4 flex items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.25em] text-muted">
-                  Dossier ouvert
-                </p>
-                <h2 className="mt-1 text-3xl font-black text-accent">
-                  {openedFolder}
-                </h2>
+              <div className="mt-5 flex items-end justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-black uppercase tracking-[0.25em] text-muted">
+                    Dossier ouvert
+                  </p>
+                  <h2 className="mt-1 truncate text-3xl font-black text-accent">
+                    {openedFolder}
+                  </h2>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setScanFolder(openedFolder);
+                    setShowScanModal(true);
+                  }}
+                  className="rounded-2xl border border-yellow-300/30 bg-yellow-400 px-4 py-3 text-sm font-black text-black shadow-lg shadow-yellow-500/10"
+                >
+                  📷 Scanner
+                </button>
               </div>
             </div>
-          </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3">
+              <StatCard label="Cartes" value={stats.totalCards} />
+              <StatCard label="Uniques" value={stats.uniqueCards} />
+              <StatCard label="Valeur" value={formatCurrency(stats.totalValue)} />
+            </div>
+
+            <div className="mt-4 grid gap-3 rounded-3xl border border-white/10 bg-white/[0.04] p-3 sm:grid-cols-[1fr_auto_auto]">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Rechercher dans ce dossier"
+                className="input-premium"
+              />
+
+              <select
+                value={setFilter}
+                onChange={(event) => setSetFilter(event.target.value)}
+                className="input-premium"
+              >
+                {extensions.map((extension) => (
+                  <option key={extension} value={extension}>
+                    {extension}
+                  </option>
+                ))}
+              </select>
+
+              <div className="inline-flex rounded-2xl border border-white/10 bg-black/20 p-1">
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={`rounded-xl px-3 py-2 text-sm font-black transition ${
+                    viewMode === "grid"
+                      ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
+                      : "!text-white/70 hover:bg-white/10 hover:!text-white"
+                  }`}
+                >
+                  ⊞
+                </button>
+
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={`rounded-xl px-3 py-2 text-sm font-black transition ${
+                    viewMode === "list"
+                      ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
+                      : "!text-white/70 hover:bg-white/10 hover:!text-white"
+                  }`}
+                >
+                  ☰
+                </button>
+              </div>
+            </div>
+
+            <div
+              className={
+                viewMode === "grid"
+                  ? "mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3"
+                  : "mt-5 grid gap-3"
+              }
+            >
+              {visibleCards.length === 0 ? (
+                <div className="card-soft col-span-2 p-5 text-center text-muted">
+                  Ce dossier est vide.
+                </div>
+              ) : (
+                visibleCards.map((card) =>
+                  viewMode === "grid" ? (
+                    <CardGridItem
+                      key={card.id}
+                      card={card}
+                      onMinus={() => updateQuantity(card.id, -1)}
+                      onPlus={() => updateQuantity(card.id, 1)}
+                      onDelete={() => deleteCard(card.id)}
+                    />
+                  ) : (
+                    <CardListItem
+                      key={card.id}
+                      card={card}
+                      folders={folders}
+                      onMinus={() => updateQuantity(card.id, -1)}
+                      onPlus={() => updateQuantity(card.id, 1)}
+                      onDelete={() => deleteCard(card.id)}
+                      onFolderChange={(folder) => updateCardFolder(card.id, folder)}
+                    />
+                  ),
+                )
+              )}
+            </div>
+          </section>
         )}
 
+        {!openedFolder && (
+          <>
         <div className="mt-8 grid grid-cols-3 gap-3">
           <StatCard label="Cartes" value={stats.totalCards} />
           <StatCard label="Uniques" value={stats.uniqueCards} />
@@ -963,45 +1129,11 @@ export default function CollectionPage() {
           </div>
         </div>
 
-        {openedFolder && (
-          <div
-            className={
-              viewMode === "grid"
-                ? "mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3"
-                : "mt-5 grid gap-3"
-            }
-          >
-            {visibleCards.length === 0 ? (
-              <div className="card-soft col-span-2 p-5 text-center text-muted">
-                Ce dossier est vide.
-              </div>
-            ) : (
-              visibleCards.map((card) =>
-                viewMode === "grid" ? (
-                  <CardGridItem
-                    key={card.id}
-                    card={card}
-                    onMinus={() => updateQuantity(card.id, -1)}
-                    onPlus={() => updateQuantity(card.id, 1)}
-                    onDelete={() => deleteCard(card.id)}
-                  />
-                ) : (
-                  <CardListItem
-                    key={card.id}
-                    card={card}
-                    folders={folders}
-                    onMinus={() => updateQuantity(card.id, -1)}
-                    onPlus={() => updateQuantity(card.id, 1)}
-                    onDelete={() => deleteCard(card.id)}
-                    onFolderChange={(folder) => updateCardFolder(card.id, folder)}
-                  />
-                ),
-              )
-            )}
-          </div>
+        </>
         )}
       </section>
 
+      {!openedFolder && (
       <button
         onClick={() => setShowFolderModal(true)}
         className="fixed bottom-24 right-5 z-50 flex h-16 w-16 items-center justify-center rounded-full border border-yellow-200/60 bg-yellow-400 text-3xl shadow-2xl shadow-yellow-500/20 ring-4 ring-yellow-400/10 transition hover:scale-105 active:scale-95"
@@ -1009,6 +1141,7 @@ export default function CollectionPage() {
       >
         <span aria-hidden="true">📁</span>
       </button>
+      )}
 
       {showScanModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
@@ -1051,9 +1184,16 @@ export default function CollectionPage() {
                   const file = event.target.files?.[0];
                   if (!file) return;
                   setScanPreview(URL.createObjectURL(file));
+                  void recognizeCardTextFromImage(file);
                 }}
               />
             </label>
+
+            {scanStatus && (
+              <p className="mt-3 rounded-2xl bg-white/[0.06] p-3 text-xs font-bold text-muted">
+                {isRecognizingScan ? "⏳ " : ""}{scanStatus}
+              </p>
+            )}
 
             <div className="mt-4 grid grid-cols-2 gap-3">
               <input
