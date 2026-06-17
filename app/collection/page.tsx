@@ -45,7 +45,7 @@ type FolderSummary = {
 };
 
 type TesseractWorker = {
-  recognize: (file: File) => Promise<{ data: { text: string } }>;
+  recognize: (file: File | Blob) => Promise<{ data: { text: string } }>;
   terminate: () => Promise<void>;
 };
 
@@ -424,6 +424,39 @@ export default function CollectionPage() {
     return { setCode: setCode?.toLowerCase(), collectorNumber: numberMatch?.[1] };
   }
 
+  async function prepareImageForOcr(file: File, mode: "full" | "title" | "bottom" = "full") {
+    const bitmap = await createImageBitmap(file);
+    const sourceY = mode === "title" ? 0 : mode === "bottom" ? Math.floor(bitmap.height * 0.62) : 0;
+    const sourceHeight = mode === "title" ? Math.floor(bitmap.height * 0.28) : mode === "bottom" ? Math.floor(bitmap.height * 0.38) : bitmap.height;
+    const maxWidth = mode === "full" ? 1600 : 1900;
+    const ratio = Math.min(maxWidth / bitmap.width, 1.8);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * ratio));
+    canvas.height = Math.max(1, Math.round(sourceHeight * ratio));
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+
+    context.drawImage(bitmap, 0, sourceY, bitmap.width, sourceHeight, 0, 0, canvas.width, canvas.height);
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = image.data;
+    for (let index = 0; index < data.length; index += 4) {
+      const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+      const contrasted = gray > 145 ? 255 : gray < 95 ? 0 : gray * 1.25;
+      data[index] = contrasted;
+      data[index + 1] = contrasted;
+      data[index + 2] = contrasted;
+    }
+    context.putImageData(image, 0, 0);
+
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", 0.95);
+    });
+  }
+
+  function uniqueOcrLines(text: string) {
+    return Array.from(new Set(text.split("\n").map((line) => line.trim()).filter(Boolean))).join("\n");
+  }
+
   async function findCardFromOcr(text: string) {
     const { setCode, collectorNumber } = extractSetAndNumber(text);
 
@@ -446,19 +479,27 @@ export default function CollectionPage() {
       setIsScanning(true);
       setScanResult(null);
       setError("");
-      setScanStatus("Analyse de la carte en cours...");
+      setScanStatus("Photo reçue. Je lis le nom et le numéro de la carte...");
       setScanPreview(URL.createObjectURL(file));
 
       const tesseract = await loadTesseract();
       const worker = await tesseract.createWorker("eng");
-      const result = await worker.recognize(file);
+
+      const titleImage = await prepareImageForOcr(file, "title");
+      const bottomImage = await prepareImageForOcr(file, "bottom");
+      const fullImage = await prepareImageForOcr(file, "full");
+
+      const titleResult = await worker.recognize(titleImage);
+      const bottomResult = await worker.recognize(bottomImage);
+      const fullResult = await worker.recognize(fullImage);
       await worker.terminate();
 
-      const card = await findCardFromOcr(result.data.text);
+      const ocrText = uniqueOcrLines(`${titleResult.data.text}\n${bottomResult.data.text}\n${fullResult.data.text}`);
+      const card = await findCardFromOcr(ocrText);
       setScanResult(card);
       setScanStatus(`Carte reconnue : ${card.name}`);
     } catch (err) {
-      setScanStatus(err instanceof Error ? err.message : "Reconnaissance impossible.");
+      setScanStatus(err instanceof Error ? err.message : "Carte non reconnue. Reprends une photo bien nette, droite, avec le nom visible en haut.");
     } finally {
       setIsScanning(false);
     }
@@ -545,29 +586,31 @@ export default function CollectionPage() {
         )}
       </section>
 
-      <div className="fixed bottom-24 right-4 z-40 flex flex-col gap-3">
+      <div className="fixed bottom-24 right-3 z-40 flex flex-col gap-2">
         {!openedFolder && (
           <button
             onClick={() => setShowFolderModal(true)}
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f59e0b] text-2xl shadow-2xl shadow-orange-500/30 ring-4 ring-white/10 transition active:scale-95"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-[#f59e0b] text-lg shadow-xl shadow-orange-500/20 ring-2 ring-white/10 transition active:scale-95"
             aria-label="Créer un dossier"
           >
             📁
           </button>
         )}
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f59e0b] text-2xl shadow-2xl shadow-orange-500/30 ring-4 ring-white/10 transition active:scale-95"
-          aria-label="Ajouter une carte"
-        >
-          🎴
-        </button>
+        {!openedFolder && (
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.12] text-lg shadow-xl ring-1 ring-white/10 backdrop-blur transition active:scale-95"
+            aria-label="Ajouter une carte"
+          >
+            🎴
+          </button>
+        )}
         <button
           onClick={() => {
-            setScanFolder(openedFolder || "Non classé");
+            setScanFolder(openedFolder && openedFolder !== "__ALL__" ? openedFolder : "Non classé");
             setShowScanModal(true);
           }}
-          className="flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-black/50 text-2xl shadow-2xl backdrop-blur transition active:scale-95"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/45 text-lg shadow-xl backdrop-blur transition active:scale-95"
           aria-label="Scanner une carte"
         >
           ⛶
@@ -1177,29 +1220,90 @@ function ScanModal({
 }) {
   return (
     <div className="fixed inset-0 z-[100] bg-[#101116] text-white">
-      <div className="mx-auto flex h-full max-w-md flex-col p-4">
-        <div className="flex items-center justify-between"><button onClick={onClose} className="text-2xl">✕</button><h2 className="font-black">Scanner une carte</h2><span className="w-6" /></div>
-        <div className="mt-6 flex flex-1 flex-col items-center justify-center rounded-[2rem] bg-black/25 p-4">
-          <button onClick={() => fileInputRef.current?.click()} className="relative flex aspect-[63/88] w-full max-w-xs items-center justify-center overflow-hidden rounded-3xl border-4 border-white/20 bg-black/40">
-            {scanPreview ? <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain" /> : <span className="text-center text-sm font-bold text-white/60">Positionne la carte dans le cadre<br />puis prends la photo</span>}
+      <div className="mx-auto flex h-full max-w-md flex-col px-4 pb-4 pt-3">
+        <div className="flex items-center justify-between">
+          <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-xl">✕</button>
+          <h2 className="font-black">Scanner une carte</h2>
+          <span className="w-10" />
+        </div>
+
+        <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-black/25 p-4">
+          <div className="relative mx-auto flex aspect-[63/88] w-full max-w-[280px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-black/40">
+            {scanPreview ? (
+              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain" />
+            ) : (
+              <div className="px-8 text-center">
+                <p className="text-lg font-black">Cadre la carte</p>
+                <p className="mt-2 text-sm font-bold text-white/55">Nom visible en haut, carte droite, lumière propre.</p>
+              </div>
+            )}
             <span className="absolute left-4 top-4 h-10 w-10 rounded-tl-2xl border-l-4 border-t-4 border-white" />
             <span className="absolute right-4 top-4 h-10 w-10 rounded-tr-2xl border-r-4 border-t-4 border-white" />
             <span className="absolute bottom-4 left-4 h-10 w-10 rounded-bl-2xl border-b-4 border-l-4 border-white" />
             <span className="absolute bottom-4 right-4 h-10 w-10 rounded-br-2xl border-b-4 border-r-4 border-white" />
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) onFile(file);
+            }}
+          />
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isScanning}
+            className="mx-auto mt-4 w-full max-w-[280px] rounded-2xl bg-white py-3 text-base font-black text-black disabled:opacity-50"
+          >
+            {scanPreview ? "Reprendre une photo" : "Prendre la photo"}
           </button>
-          <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); }} />
-          <p className="mt-4 text-center text-sm font-bold text-white/60">{isScanning ? "Analyse OCR en cours..." : scanStatus || "Prends la photo : ManaForge tente de reconnaître la carte automatiquement"}</p>
-          {scanResult && <div className="mt-4 flex w-full items-center gap-3 rounded-2xl bg-white/[0.06] p-3">{getCardArt(scanResult) && <img src={getCardArt(scanResult)} alt={scanResult.name} className="h-16 w-16 rounded-xl object-cover" />}<div className="min-w-0"><p className="truncate font-black">{scanResult.name}</p><p className="text-xs text-white/60">{scanResult.set_name} · #{scanResult.collector_number}</p><p className="text-sm font-black">{formatCurrency(getCardPrice(scanResult), 2)}</p></div></div>}
+
+          <p className="mt-3 min-h-10 text-center text-sm font-bold text-white/60">
+            {isScanning ? "Reconnaissance en cours..." : scanStatus || "Après la photo, ManaForge cherche automatiquement la carte."}
+          </p>
+
+          {scanResult && (
+            <div className="mt-3 flex w-full items-center gap-3 rounded-2xl bg-white/[0.06] p-3">
+              {getCardArt(scanResult) && <img src={getCardArt(scanResult)} alt={scanResult.name} className="h-16 w-16 rounded-xl object-cover" />}
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-black">{scanResult.name}</p>
+                <p className="text-xs text-white/60">{scanResult.set_name} · #{scanResult.collector_number}</p>
+                <p className="text-sm font-black">{formatCurrency(getCardPrice(scanResult), 2)}</p>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="mt-4 grid grid-cols-[.7fr_1.3fr] gap-2">
-          <input type="number" min={1} value={scanQuantity} onChange={(event) => setScanQuantity(Math.max(1, Number(event.target.value)))} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
-          <select value={scanFolder} onChange={(event) => setScanFolder(event.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">{folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select>
+
+        <div className="mt-3 grid grid-cols-[.7fr_1.3fr] gap-2">
+          <input
+            type="number"
+            min={1}
+            value={scanQuantity}
+            onChange={(event) => setScanQuantity(Math.max(1, Number(event.target.value)))}
+            className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none"
+          />
+          <select
+            value={scanFolder}
+            onChange={(event) => setScanFolder(event.target.value)}
+            className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none"
+          >
+            {folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+          </select>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-3">
-          <button onClick={() => fileInputRef.current?.click()} className="rounded-full border border-white/15 bg-black/30 py-4 text-2xl">🖼️</button>
-          <button onClick={() => fileInputRef.current?.click()} className="rounded-full bg-white py-4 text-2xl text-black">●</button>
-          <button disabled={!scanResult || isScanning} onClick={onConfirm} className="rounded-full border border-white/15 bg-[#f59e0b] py-4 text-2xl text-black disabled:opacity-40">✓</button>
-        </div>
+
+        <button
+          disabled={!scanResult || isScanning}
+          onClick={onConfirm}
+          className="mt-3 w-full rounded-2xl bg-[#f59e0b] py-4 font-black text-black disabled:opacity-40"
+        >
+          Ajouter la carte au dossier
+        </button>
       </div>
     </div>
   );
