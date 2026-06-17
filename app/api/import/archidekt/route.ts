@@ -1,45 +1,77 @@
 import { NextResponse } from "next/server";
 
-type ImportBody = {
-  deckId?: string;
-};
+function extractArchidektId(value: string) {
+  const clean = value.trim();
+  const direct = clean.match(/^\d+$/);
+  if (direct) return direct[0];
+  const match = clean.match(/archidekt\.com\/decks\/(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+async function fetchArchidekt(deckId: string) {
+  const endpoints = [
+    `https://archidekt.com/api/decks/${deckId}/`,
+    `https://archidekt.com/api/decks/${deckId}`,
+  ];
+
+  let lastStatus = 0;
+  let lastText = "";
+
+  for (const endpoint of endpoints) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          accept: "application/json,text/plain,*/*",
+          "user-agent": "ManaForge/1.0 (+https://manaforge-five.vercel.app)",
+          referer: "https://archidekt.com/",
+        },
+      });
+
+      lastStatus = response.status;
+
+      if (response.ok) {
+        return await response.json();
+      }
+
+      lastText = await response.text().catch(() => "");
+    } catch (error) {
+      lastText = error instanceof Error ? error.message : "Fetch Archidekt failed";
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  const message =
+    lastStatus === 403 || lastStatus === 404
+      ? "Deck Archidekt introuvable ou privé. Vérifie que le deck est public."
+      : lastStatus === 429
+        ? "Archidekt limite temporairement les imports. Réessaie dans quelques minutes."
+        : `Import Archidekt impossible${lastStatus ? ` (${lastStatus})` : ""}. ${lastText}`;
+
+  throw new Error(message);
+}
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as ImportBody;
+    const body = (await request.json()) as { deckId?: string; url?: string };
+    const deckId = extractArchidektId(body.deckId || body.url || "");
 
-    if (!body.deckId) {
-      return NextResponse.json({ error: "deckId manquant" }, { status: 400 });
+    if (!deckId) {
+      return NextResponse.json({ error: "URL ou ID Archidekt invalide." }, { status: 400 });
     }
 
-    const response = await fetch(
-      `https://archidekt.com/api/decks/${body.deckId}/`,
-      {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": "Manaforge/1.0",
-        },
-        cache: "no-store",
-      }
-    );
-
-    if (!response.ok) {
-      return NextResponse.json(
-        {
-          error: "Deck Archidekt introuvable ou inaccessible",
-          status: response.status,
-        },
-        { status: response.status }
-      );
-    }
-
-    const data = await response.json();
-
-    return NextResponse.json(data);
-  } catch {
+    const deck = await fetchArchidekt(deckId);
+    return NextResponse.json(deck);
+  } catch (error) {
     return NextResponse.json(
-      { error: "Erreur serveur pendant l'import Archidekt" },
-      { status: 500 }
+      { error: error instanceof Error ? error.message : "Erreur pendant l'import Archidekt." },
+      { status: 502 },
     );
   }
 }

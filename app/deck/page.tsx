@@ -4,7 +4,8 @@
 
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 type DeckCard = {
   name: string;
@@ -16,7 +17,7 @@ type DeckCard = {
 };
 
 type Deck = {
-  id: number;
+  id: string | number;
   name: string;
   commander: string;
   commanderImage?: string;
@@ -26,6 +27,21 @@ type Deck = {
   wins: number;
   losses: number;
   decklist?: DeckCard[];
+};
+
+type DeckRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  commander: string | null;
+  commander_image: string | null;
+  colors: string | null;
+  cards: number | null;
+  price: number | string | null;
+  wins: number | null;
+  losses: number | null;
+  decklist: DeckCard[] | null;
+  created_at?: string;
 };
 
 type ArchidektCategory = string | { name?: string };
@@ -45,10 +61,21 @@ type ArchidektCardEntry = {
 type ArchidektResponse = {
   name?: string;
   cards?: ArchidektCardEntry[];
+  error?: string;
 };
 
 type ScryfallAutocompleteResponse = {
   data?: string[];
+};
+
+type ScryfallCardResponse = {
+  image_uris?: { normal?: string };
+  card_faces?: { image_uris?: { normal?: string }; oracle_text?: string }[];
+  color_identity?: string[];
+  prices?: { eur?: string | null; usd?: string | null };
+  type_line?: string;
+  oracle_text?: string;
+  cmc?: number;
 };
 
 const colorIcons: Record<string, string> = {
@@ -59,16 +86,54 @@ const colorIcons: Record<string, string> = {
   G: "🟢",
 };
 
+function mapDeckRow(row: DeckRow): Deck {
+  return {
+    id: row.id,
+    name: row.name,
+    commander: row.commander || "Commandant inconnu",
+    commanderImage: row.commander_image || undefined,
+    colors: row.colors || "Incolore",
+    cards: Number(row.cards || 0),
+    price: Number(row.price || 0),
+    wins: Number(row.wins || 0),
+    losses: Number(row.losses || 0),
+    decklist: Array.isArray(row.decklist) ? row.decklist : [],
+  };
+}
+
+function getCategoryNames(categories?: ArchidektCategory[]) {
+  return (categories ?? []).map((category) =>
+    typeof category === "string" ? category : category.name ?? "",
+  );
+}
+
+function extractArchidektId(url: string) {
+  const clean = url.trim();
+  if (/^\d+$/.test(clean)) return clean;
+  const match = clean.match(/archidekt\.com\/decks\/(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 export default function DecksPage() {
+  const supabase = useMemo(() => createClient(), []);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState("");
   const [decks, setDecks] = useState<Deck[]>([]);
-  const [selectedDeckId, setSelectedDeckId] = useState<number | null>(null);
+  const [selectedDeckId, setSelectedDeckId] = useState<string | number | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
 
   const [newDeckName, setNewDeckName] = useState("");
   const [newCommander, setNewCommander] = useState("");
-  const [commanderSuggestions, setCommanderSuggestions] = useState<string[]>(
-    []
-  );
+  const [commanderSuggestions, setCommanderSuggestions] = useState<string[]>([]);
   const [isSearchingCommander, setIsSearchingCommander] = useState(false);
 
   const [archidektUrl, setArchidektUrl] = useState("");
@@ -76,24 +141,87 @@ export default function DecksPage() {
   const [importError, setImportError] = useState("");
 
   useEffect(() => {
-    try {
-      const savedDecks = localStorage.getItem("manaforge-decks");
-      const parsedDecks = savedDecks ? (JSON.parse(savedDecks) as Deck[]) : [];
+    let cancelled = false;
 
-      setDecks(parsedDecks);
-      setSelectedDeckId(parsedDecks[0]?.id ?? null);
-    } catch {
-      setDecks([]);
-      setSelectedDeckId(null);
-    } finally {
-      setHasLoaded(true);
+    async function loadDecks() {
+      try {
+        const savedDecks = localStorage.getItem("manaforge-decks");
+        const parsedDecks = savedDecks ? (JSON.parse(savedDecks) as Deck[]) : [];
+
+        const { data: authData } = await supabase.auth.getUser();
+        const currentUser = authData.user;
+
+        if (!currentUser) {
+          if (!cancelled) {
+            setDecks(parsedDecks);
+            setSelectedDeckId(parsedDecks[0]?.id ?? null);
+            setSyncStatus("Connecte-toi pour sauvegarder tes decks dans le cloud.");
+          }
+          return;
+        }
+
+        if (!cancelled) setUserId(currentUser.id);
+
+        const { data: remoteDecks, error } = await supabase
+          .from("decks")
+          .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: true });
+
+        if (error) throw error;
+
+        let cloudDecks = ((remoteDecks || []) as DeckRow[]).map(mapDeckRow);
+
+        if (cloudDecks.length === 0 && parsedDecks.length > 0) {
+          const decksToImport = parsedDecks.map((deck) => ({
+            user_id: currentUser.id,
+            name: deck.name,
+            commander: deck.commander,
+            commander_image: deck.commanderImage || null,
+            colors: deck.colors || "Incolore",
+            cards: Number(deck.cards || deck.decklist?.reduce((sum, card) => sum + Number(card.quantity || 1), 0) || 0),
+            price: Number(deck.price || 0),
+            wins: Number(deck.wins || 0),
+            losses: Number(deck.losses || 0),
+            decklist: deck.decklist || [],
+          }));
+
+          const { data: insertedDecks, error: importError } = await supabase
+            .from("decks")
+            .insert(decksToImport)
+            .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at");
+
+          if (importError) throw importError;
+          cloudDecks = ((insertedDecks || []) as DeckRow[]).map(mapDeckRow);
+          localStorage.removeItem("manaforge-decks");
+        }
+
+        if (!cancelled) {
+          setDecks(cloudDecks);
+          setSelectedDeckId(cloudDecks[0]?.id ?? null);
+          setSyncStatus(cloudDecks.length > 0 ? "Decks synchronisés avec ton compte." : "Aucun deck cloud pour le moment.");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSyncStatus("Synchronisation decks impossible pour le moment.");
+          setImportError(error instanceof Error ? error.message : "Erreur pendant le chargement des decks.");
+        }
+      } finally {
+        if (!cancelled) setHasLoaded(true);
+      }
     }
-  }, []);
+
+    void loadDecks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || userId) return;
     localStorage.setItem("manaforge-decks", JSON.stringify(decks));
-  }, [decks, hasLoaded]);
+  }, [decks, hasLoaded, userId]);
 
   useEffect(() => {
     const query = newCommander.trim();
@@ -108,9 +236,7 @@ export default function DecksPage() {
         setIsSearchingCommander(true);
 
         const response = await fetch(
-          `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(
-            query
-          )}`
+          `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(query)}`,
         );
 
         if (!response.ok) {
@@ -135,112 +261,116 @@ export default function DecksPage() {
 
   async function getCommanderImage(commanderName: string) {
     const response = await fetch(
-      `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(
-        commanderName
-      )}`
+      `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(commanderName)}`,
     );
 
     if (!response.ok) {
-      return {
-        image: "",
-        colors: "Incolore",
-        price: 0,
-      };
+      return { image: "", colors: "Incolore", price: 0 };
     }
 
-    const data = await response.json();
-
-    const image =
-      data.image_uris?.normal ||
-      data.card_faces?.[0]?.image_uris?.normal ||
-      "";
-
+    const data = (await response.json()) as ScryfallCardResponse;
+    const image = data.image_uris?.normal || data.card_faces?.[0]?.image_uris?.normal || "";
     const colors =
-      data.color_identity?.length > 0
-        ? data.color_identity
-            .map((color: string) => colorIcons[color] || color)
-            .join(" ")
+      data.color_identity && data.color_identity.length > 0
+        ? data.color_identity.map((color) => colorIcons[color] || color).join(" ")
         : "Incolore";
-
     const price = Number(data.prices?.eur || data.prices?.usd || 0);
 
-    return {
-      image,
-      colors,
-      price,
-    };
+    return { image, colors, price };
   }
 
   async function enrichDecklist(decklist: DeckCard[]): Promise<DeckCard[]> {
-    const enrichedCards = await Promise.all(
-      decklist.map(async (card) => {
-        try {
-          const response = await fetch(
-            `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(
-              card.name
-            )}`
-          );
+    const enrichedCards: DeckCard[] = [];
 
-          if (!response.ok) return card;
+    for (const card of decklist) {
+      try {
+        const response = await fetch(
+          `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(card.name)}`,
+        );
 
-          const data = await response.json();
-
-          return {
-            ...card,
-            typeLine: data.type_line || "",
-            oracleText:
-              data.oracle_text || data.card_faces?.[0]?.oracle_text || "",
-            manaValue: data.cmc || 0,
-            price: Number(data.prices?.eur || data.prices?.usd || 0),
-          };
-        } catch {
-          return card;
+        if (!response.ok) {
+          enrichedCards.push(card);
+          continue;
         }
-      })
-    );
+
+        const data = (await response.json()) as ScryfallCardResponse;
+        enrichedCards.push({
+          ...card,
+          typeLine: data.type_line || "",
+          oracleText: data.oracle_text || data.card_faces?.[0]?.oracle_text || "",
+          manaValue: data.cmc || 0,
+          price: Number(data.prices?.eur || data.prices?.usd || 0),
+        });
+      } catch {
+        enrichedCards.push(card);
+      }
+    }
 
     return enrichedCards;
+  }
+
+  async function saveDeck(deck: Deck) {
+    if (!userId) return deck;
+
+    const { data, error } = await supabase
+      .from("decks")
+      .insert({
+        user_id: userId,
+        name: deck.name,
+        commander: deck.commander,
+        commander_image: deck.commanderImage || null,
+        colors: deck.colors,
+        cards: deck.cards,
+        price: deck.price,
+        wins: deck.wins,
+        losses: deck.losses,
+        decklist: deck.decklist || [],
+      })
+      .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at")
+      .single();
+
+    if (error) throw error;
+    return mapDeckRow(data as DeckRow);
   }
 
   async function addDeck() {
     if (!newDeckName.trim() || !newCommander.trim()) return;
 
-    const commanderData = await getCommanderImage(newCommander);
+    try {
+      const commanderData = await getCommanderImage(newCommander);
+      const optimisticId = Date.now();
+      const deck: Deck = {
+        id: optimisticId,
+        name: newDeckName.trim(),
+        commander: newCommander.trim(),
+        commanderImage: commanderData.image,
+        colors: commanderData.colors,
+        cards: 100,
+        price: commanderData.price,
+        wins: 0,
+        losses: 0,
+        decklist: [],
+      };
 
-    const deck: Deck = {
-      id: Date.now(),
-      name: newDeckName.trim(),
-      commander: newCommander.trim(),
-      commanderImage: commanderData.image,
-      colors: commanderData.colors,
-      cards: 100,
-      price: commanderData.price,
-      wins: 0,
-      losses: 0,
-      decklist: [],
-    };
+      setDecks((current) => [...current, deck]);
+      setSelectedDeckId(deck.id);
+      setNewDeckName("");
+      setNewCommander("");
+      setCommanderSuggestions([]);
 
-    setDecks((current) => [...current, deck]);
-    setSelectedDeckId(deck.id);
-    setNewDeckName("");
-    setNewCommander("");
-    setCommanderSuggestions([]);
-  }
-
-  function extractArchidektId(url: string) {
-    const match = url.match(/archidekt\.com\/decks\/(\d+)/);
-    return match?.[1] ?? null;
-  }
-
-  function getCategoryNames(categories?: ArchidektCategory[]) {
-    return (categories ?? []).map((category) =>
-      typeof category === "string" ? category : category.name ?? ""
-    );
+      if (userId) {
+        const savedDeck = await saveDeck(deck);
+        setDecks((current) => current.map((item) => (item.id === optimisticId ? savedDeck : item)));
+        setSelectedDeckId(savedDeck.id);
+        setSyncStatus("Deck sauvegardé dans Supabase.");
+      }
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Erreur pendant la création du deck.");
+    }
   }
 
   async function importArchidektDeck() {
     setImportError("");
-
     const cleanUrl = archidektUrl.trim();
 
     if (!cleanUrl) {
@@ -260,42 +390,29 @@ export default function DecksPage() {
 
       const response = await fetch("/api/import/archidekt", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deckId }),
       });
 
+      const data = (await response.json()) as ArchidektResponse;
+
       if (!response.ok) {
-        throw new Error("Deck Archidekt introuvable ou inaccessible.");
+        throw new Error(data.error || "Deck Archidekt introuvable ou inaccessible.");
       }
 
-      const data = (await response.json()) as ArchidektResponse;
       const archidektCards = data.cards ?? [];
-
       const rawDecklist: DeckCard[] = archidektCards
         .filter((entry) => {
-          const categories = getCategoryNames(entry.categories).map((category) =>
-            category.toLowerCase()
-          );
-
-          return !categories.some((category) =>
-            ["maybeboard", "sideboard"].includes(category)
-          );
+          const categories = getCategoryNames(entry.categories).map((category) => category.toLowerCase());
+          return !categories.some((category) => ["maybeboard", "sideboard"].includes(category));
         })
         .map((entry) => ({
-          name:
-            entry.card?.oracleCard?.name ||
-            entry.card?.name ||
-            entry.name ||
-            "Carte inconnue",
+          name: entry.card?.oracleCard?.name || entry.card?.name || entry.name || "Carte inconnue",
           quantity: entry.quantity || 1,
         }));
 
       const commanderEntry = archidektCards.find((entry) =>
-        getCategoryNames(entry.categories).some((category) =>
-          category.toLowerCase().includes("commander")
-        )
+        getCategoryNames(entry.categories).some((category) => category.toLowerCase().includes("commander")),
       );
 
       const commanderName =
@@ -307,15 +424,17 @@ export default function DecksPage() {
 
       const decklist = await enrichDecklist(rawDecklist);
       const commanderData = await getCommanderImage(commanderName);
+      const totalPrice = decklist.reduce((total, card) => total + Number(card.price || 0) * Number(card.quantity || 1), 0);
 
+      const optimisticId = Date.now();
       const deck: Deck = {
-        id: Date.now(),
+        id: optimisticId,
         name: data.name || "Deck Archidekt",
         commander: commanderName,
         commanderImage: commanderData.image,
         colors: commanderData.colors,
         cards: decklist.reduce((total, card) => total + card.quantity, 0),
-        price: commanderData.price,
+        price: Math.round(totalPrice * 100) / 100,
         wins: 0,
         losses: 0,
         decklist,
@@ -324,40 +443,54 @@ export default function DecksPage() {
       setDecks((current) => [...current, deck]);
       setSelectedDeckId(deck.id);
       setArchidektUrl("");
+
+      if (userId) {
+        const savedDeck = await saveDeck(deck);
+        setDecks((current) => current.map((item) => (item.id === optimisticId ? savedDeck : item)));
+        setSelectedDeckId(savedDeck.id);
+        setSyncStatus("Deck Archidekt sauvegardé dans Supabase.");
+      }
     } catch (error) {
-      setImportError(
-        error instanceof Error
-          ? error.message
-          : "Erreur pendant l'import Archidekt."
-      );
+      setImportError(error instanceof Error ? error.message : "Erreur pendant l'import Archidekt.");
     } finally {
       setIsImporting(false);
     }
   }
 
-  function deleteDeck(deckId: number) {
-    setDecks((current) => current.filter((deck) => deck.id !== deckId));
+  async function deleteDeck(deckId: string | number) {
+    const previousDecks = decks;
+    const remainingDecks = decks.filter((deck) => deck.id !== deckId);
+    setDecks(remainingDecks);
 
     if (selectedDeckId === deckId) {
-      const remainingDecks = decks.filter((deck) => deck.id !== deckId);
       setSelectedDeckId(remainingDecks[0]?.id ?? null);
+    }
+
+    if (!userId || typeof deckId !== "string") return;
+
+    const { error } = await supabase.from("decks").delete().eq("user_id", userId).eq("id", deckId);
+    if (error) {
+      setDecks(previousDecks);
+      setImportError(error.message);
     }
   }
 
-  function addWin(deckId: number) {
-    setDecks((current) =>
-      current.map((deck) =>
-        deck.id === deckId ? { ...deck, wins: deck.wins + 1 } : deck
-      )
-    );
-  }
+  async function updateDeckStats(deckId: string | number, type: "win" | "loss") {
+    const target = decks.find((deck) => deck.id === deckId);
+    if (!target) return;
 
-  function addLoss(deckId: number) {
-    setDecks((current) =>
-      current.map((deck) =>
-        deck.id === deckId ? { ...deck, losses: deck.losses + 1 } : deck
-      )
-    );
+    const nextDeck = type === "win" ? { ...target, wins: target.wins + 1 } : { ...target, losses: target.losses + 1 };
+    setDecks((current) => current.map((deck) => (deck.id === deckId ? nextDeck : deck)));
+
+    if (!userId || typeof deckId !== "string") return;
+
+    const { error } = await supabase
+      .from("decks")
+      .update({ wins: nextDeck.wins, losses: nextDeck.losses })
+      .eq("user_id", userId)
+      .eq("id", deckId);
+
+    if (error) setImportError(error.message);
   }
 
   if (!hasLoaded) {
@@ -374,97 +507,43 @@ export default function DecksPage() {
     <main className="page">
       <section className="container-app pb-24">
         <header>
-          <Link href="/" className="text-3xl font-black">
-            ←
-          </Link>
-
+          <Link href="/" className="text-3xl font-black">←</Link>
           <div className="mt-6">
-            <p className="text-sm font-bold uppercase tracking-[0.28em] text-muted">
-              Deck Forge
-            </p>
-
-            <h1 className="mt-2 text-4xl font-black text-accent">
-              Mes decks
-            </h1>
-
-            <p className="mt-2 text-muted">
-              Crée, importe et analyse tes decks Commander.
-            </p>
+            <p className="text-sm font-bold uppercase tracking-[0.28em] text-muted">Deck Forge</p>
+            <h1 className="mt-2 text-4xl font-black text-accent">Mes decks</h1>
+            <p className="mt-2 text-muted">Crée, importe et analyse tes decks Commander.</p>
           </div>
+          {syncStatus && (
+            <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm font-bold text-muted">{syncStatus}</p>
+          )}
         </header>
 
         <div className="mt-8 card-soft p-5">
           <h2 className="text-xl font-black">Créer un deck</h2>
-
           <div className="mt-5 space-y-4">
-            <input
-              value={newDeckName}
-              onChange={(event) => setNewDeckName(event.target.value)}
-              placeholder="Nom du deck"
-              className="input-premium"
-            />
-
+            <input value={newDeckName} onChange={(event) => setNewDeckName(event.target.value)} placeholder="Nom du deck" className="input-premium" />
             <div className="relative">
-              <input
-                value={newCommander}
-                onChange={(event) => setNewCommander(event.target.value)}
-                placeholder="Commandant"
-                className="input-premium"
-              />
-
+              <input value={newCommander} onChange={(event) => setNewCommander(event.target.value)} placeholder="Commandant" className="input-premium" />
               {(commanderSuggestions.length > 0 || isSearchingCommander) && (
                 <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#09090d] shadow-2xl">
-                  {isSearchingCommander && (
-                    <p className="p-3 text-sm text-muted">Recherche...</p>
-                  )}
-
+                  {isSearchingCommander && <p className="p-3 text-sm text-muted">Recherche...</p>}
                   {commanderSuggestions.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      onClick={() => {
-                        setNewCommander(suggestion);
-                        setCommanderSuggestions([]);
-                      }}
-                      className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10"
-                    >
+                    <button key={suggestion} type="button" onClick={() => { setNewCommander(suggestion); setCommanderSuggestions([]); }} className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10">
                       {suggestion}
                     </button>
                   ))}
                 </div>
               )}
             </div>
-
-            <button onClick={addDeck} className="btn-primary w-full">
-              Ajouter le deck
-            </button>
+            <button onClick={addDeck} className="btn-primary w-full">Ajouter le deck</button>
           </div>
 
           <div className="mt-6 border-t border-white/10 pt-6">
             <h3 className="text-lg font-black">Importer depuis Archidekt</h3>
-
-            <p className="mt-1 text-sm text-muted">
-              Colle l’URL publique de ton deck Archidekt.
-            </p>
-
-            <input
-              value={archidektUrl}
-              onChange={(event) => setArchidektUrl(event.target.value)}
-              placeholder="https://archidekt.com/decks/22768503/kudo_kudo"
-              className="input-premium mt-4"
-            />
-
-            {importError && (
-              <p className="mt-3 rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">
-                {importError}
-              </p>
-            )}
-
-            <button
-              onClick={importArchidektDeck}
-              disabled={isImporting}
-              className="btn-primary mt-4 w-full disabled:cursor-not-allowed disabled:opacity-50"
-            >
+            <p className="mt-1 text-sm text-muted">Colle l’URL publique de ton deck Archidekt.</p>
+            <input value={archidektUrl} onChange={(event) => setArchidektUrl(event.target.value)} placeholder="https://archidekt.com/decks/22768503/kudo_kudo" className="input-premium mt-4" />
+            {importError && <p className="mt-3 rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">{importError}</p>}
+            <button onClick={importArchidektDeck} disabled={isImporting} className="btn-primary mt-4 w-full disabled:cursor-not-allowed disabled:opacity-50">
               {isImporting ? "Import en cours..." : "Importer Archidekt"}
             </button>
           </div>
@@ -474,40 +553,15 @@ export default function DecksPage() {
           <div className="mt-6 grid gap-3">
             {decks.map((deck) => {
               const games = deck.wins + deck.losses;
-              const winrate =
-                games === 0 ? 0 : Math.round((deck.wins / games) * 100);
-
+              const winrate = games === 0 ? 0 : Math.round((deck.wins / games) * 100);
               return (
-                <button
-                  key={deck.id}
-                  onClick={() => setSelectedDeckId(deck.id)}
-                  className={`card-soft p-4 text-left transition ${
-                    selectedDeckId === deck.id
-                      ? "border-accent bg-white/10"
-                      : "border-white/10"
-                  }`}
-                >
+                <button key={deck.id} onClick={() => setSelectedDeckId(deck.id)} className={`card-soft p-4 text-left transition ${selectedDeckId === deck.id ? "border-accent bg-white/10" : "border-white/10"}`}>
                   <div className="flex items-center gap-4">
-                    {deck.commanderImage ? (
-                      <img
-                        src={deck.commanderImage}
-                        alt={deck.commander}
-                        className="h-20 w-14 rounded-xl object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-20 w-14 items-center justify-center rounded-xl bg-black/40 text-2xl">
-                        🎴
-                      </div>
-                    )}
-
+                    {deck.commanderImage ? <img src={deck.commanderImage} alt={deck.commander} className="h-20 w-14 rounded-xl object-cover" /> : <div className="flex h-20 w-14 items-center justify-center rounded-xl bg-black/40 text-2xl">🎴</div>}
                     <div className="flex-1">
                       <h3 className="font-black">{deck.name}</h3>
-                      <p className="text-sm font-bold text-accent">
-                        {deck.commander}
-                      </p>
-                      <p className="mt-1 text-xs text-muted">
-                        {deck.colors} · {deck.cards} cartes · {winrate}% WR
-                      </p>
+                      <p className="text-sm font-bold text-accent">{deck.commander}</p>
+                      <p className="mt-1 text-xs text-muted">{deck.colors} · {deck.cards} cartes · {winrate}% WR</p>
                     </div>
                   </div>
                 </button>
@@ -518,60 +572,29 @@ export default function DecksPage() {
 
         {selectedDeck && (
           <div className="mt-6 card-premium overflow-hidden p-5">
-            <div className="flex gap-5">
-              {selectedDeck.commanderImage ? (
-                <img
-                  src={selectedDeck.commanderImage}
-                  alt={selectedDeck.commander}
-                  className="h-44 w-32 rounded-2xl object-cover"
-                />
-              ) : (
-                <div className="flex h-44 w-32 items-center justify-center rounded-2xl bg-black/40 text-5xl">
-                  🎴
-                </div>
-              )}
-
-              <div className="flex-1">
-                <p className="text-sm font-bold uppercase tracking-[0.2em] text-muted">
-                  Deck sélectionné
-                </p>
-
-                <h2 className="mt-2 text-2xl font-black">
-                  {selectedDeck.name}
-                </h2>
-
-                <p className="mt-1 font-bold text-accent">
-                  {selectedDeck.commander}
-                </p>
-
+            <div className="grid gap-5 md:grid-cols-[150px_1fr]">
+              {selectedDeck.commanderImage ? <img src={selectedDeck.commanderImage} alt={selectedDeck.commander} className="h-44 w-32 rounded-2xl object-cover" /> : <div className="flex h-44 w-32 items-center justify-center rounded-2xl bg-black/40 text-5xl">🎴</div>}
+              <div className="min-w-0">
+                <p className="text-sm font-bold uppercase tracking-[0.2em] text-muted">Deck sélectionné</p>
+                <h2 className="mt-2 text-2xl font-black">{selectedDeck.name}</h2>
+                <p className="mt-1 font-bold text-accent">{selectedDeck.commander}</p>
                 <div className="mt-4 space-y-2 text-sm text-muted">
                   <p>Couleurs : {selectedDeck.colors}</p>
                   <p>Cartes : {selectedDeck.cards}</p>
-                  <p>Prix commandant : {selectedDeck.price}€</p>
-                  <p>Prix du deck : {analysis.totalPrice}€</p>
+                  <p>Prix commandant : {formatCurrency(selectedDeck.price)}</p>
+                  <p>Prix du deck : {formatCurrency(analysis.totalPrice)}</p>
                 </div>
 
                 {selectedDeck.decklist && selectedDeck.decklist.length > 0 && (
                   <div className="mt-6">
-                    <h3 className="mb-3 text-sm font-black uppercase tracking-wider text-muted">
-                      Decklist
-                    </h3>
-
+                    <h3 className="mb-3 text-sm font-black uppercase tracking-wider text-muted">Decklist</h3>
                     <div className="max-h-64 overflow-y-auto rounded-2xl bg-black/20 p-3">
                       {selectedDeck.decklist.map((card, index) => (
-                        <div
-                          key={`${card.name}-${index}`}
-                          className="flex justify-between border-b border-white/5 py-2 text-sm"
-                        >
-                          <div>
-                            <div>{card.name}</div>
-
-                            <div className="text-xs text-muted">
-                              MV: {card.manaValue ?? "?"} •{" "}
-                              {card.price ?? "?"}€
-                            </div>
+                        <div key={`${card.name}-${index}`} className="flex justify-between gap-3 border-b border-white/5 py-2 text-sm">
+                          <div className="min-w-0">
+                            <div className="truncate font-bold">{card.name}</div>
+                            <div className="text-xs text-muted">MV: {card.manaValue ?? "?"} • {card.price ?? "?"}€</div>
                           </div>
-
                           <span>x{card.quantity}</span>
                         </div>
                       ))}
@@ -581,27 +604,15 @@ export default function DecksPage() {
 
                 {selectedDeck.decklist && selectedDeck.decklist.length > 0 && (
                   <div className="mt-6 rounded-2xl bg-black/30 p-4">
-                    <h3 className="mb-4 text-sm font-black uppercase tracking-wider text-muted">
-                      Analyse Scryfall
-                    </h3>
-
+                    <h3 className="mb-4 text-sm font-black uppercase tracking-wider text-muted">Analyse Scryfall</h3>
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <AnalysisBox label="Terrains" value={analysis.lands} />
-                      <AnalysisBox
-                        label="Créatures"
-                        value={analysis.creatures}
-                      />
+                      <AnalysisBox label="Créatures" value={analysis.creatures} />
                       <AnalysisBox label="Ramp" value={analysis.ramp} />
                       <AnalysisBox label="Pioche" value={analysis.draw} />
                       <AnalysisBox label="Removal" value={analysis.removal} />
-                      <AnalysisBox
-                        label="Wraths"
-                        value={analysis.boardWipes}
-                      />
-                      <AnalysisBox
-                        label="Prix deck"
-                        value={`${analysis.totalPrice}€`}
-                      />
+                      <AnalysisBox label="Wraths" value={analysis.boardWipes} />
+                      <AnalysisBox label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
                       <AnalysisBox label="Note" value={`${analysis.score}/10`} />
                     </div>
                   </div>
@@ -610,43 +621,19 @@ export default function DecksPage() {
             </div>
 
             <div className="mt-6 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => addWin(selectedDeck.id)}
-                className="rounded-2xl bg-green-500/20 px-4 py-4 font-black text-green-300"
-              >
-                + Victoire
-              </button>
-
-              <button
-                onClick={() => addLoss(selectedDeck.id)}
-                className="rounded-2xl bg-red-500/20 px-4 py-4 font-black text-red-300"
-              >
-                + Défaite
-              </button>
+              <button onClick={() => void updateDeckStats(selectedDeck.id, "win")} className="rounded-2xl bg-green-500/20 px-4 py-4 font-black text-green-300">+ Victoire</button>
+              <button onClick={() => void updateDeckStats(selectedDeck.id, "loss")} className="rounded-2xl bg-red-500/20 px-4 py-4 font-black text-red-300">+ Défaite</button>
             </div>
-
-            <button
-              onClick={() => deleteDeck(selectedDeck.id)}
-              className="mt-4 w-full rounded-2xl bg-red-500/10 px-4 py-4 font-black text-red-300"
-            >
-              Supprimer le deck
-            </button>
+            <button onClick={() => { if (window.confirm(`Supprimer le deck "${selectedDeck.name}" ?`)) void deleteDeck(selectedDeck.id); }} className="mt-4 w-full rounded-2xl bg-red-500/10 px-4 py-4 font-black text-red-300">Supprimer le deck</button>
           </div>
         )}
       </section>
-
       <BottomNav />
     </main>
   );
 }
 
-function AnalysisBox({
-  label,
-  value,
-}: {
-  label: string;
-  value: number | string;
-}) {
+function AnalysisBox({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-xl bg-white/5 p-3">
       <p className="text-muted">{label}</p>
@@ -709,31 +696,15 @@ function analyzeDeck(decklist?: DeckCard[]) {
           name.includes("signet") ||
           name.includes("talisman"));
 
-      const isDraw =
-        text.includes("draw a card") ||
-        text.includes("draw cards") ||
-        text.includes("draw two cards") ||
-        text.includes("draw three cards");
-
-      const isRemoval =
-        text.includes("destroy target") ||
-        text.includes("exile target") ||
-        text.includes("return target") ||
-        text.includes("counter target");
-
-      const isBoardWipe =
-        text.includes("destroy all") ||
-        text.includes("exile all") ||
-        text.includes("each creature") ||
-        text.includes("all creatures get");
+      const isDraw = text.includes("draw a card") || text.includes("draw cards") || text.includes("draw two cards") || text.includes("draw three cards");
+      const isRemoval = text.includes("destroy target") || text.includes("exile target") || text.includes("return target") || text.includes("counter target");
+      const isBoardWipe = text.includes("destroy all") || text.includes("exile all") || text.includes("each creature") || text.includes("all creatures get");
 
       if (isRamp) acc.ramp += quantity;
       if (isDraw) acc.draw += quantity;
       if (isRemoval) acc.removal += quantity;
       if (isBoardWipe) acc.boardWipes += quantity;
-
       acc.totalPrice += (card.price || 0) * quantity;
-
       return acc;
     },
     {
@@ -749,16 +720,11 @@ function analyzeDeck(decklist?: DeckCard[]) {
       removal: 0,
       boardWipes: 0,
       totalPrice: 0,
-    }
+    },
   );
 
-  const averageManaValue =
-    nonLandCount > 0
-      ? Math.round((totalManaValue / nonLandCount) * 10) / 10
-      : 0;
-
+  const averageManaValue = nonLandCount > 0 ? Math.round((totalManaValue / nonLandCount) * 10) / 10 : 0;
   let score = 10;
-
   if (analysis.lands < 34) score -= 2;
   if (analysis.lands > 39) score -= 1;
   if (analysis.ramp < 8) score -= 1.5;
