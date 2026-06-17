@@ -15,7 +15,7 @@ type DeckCard = {
 };
 
 type Deck = {
-  id: number;
+  id: string | number;
   name: string;
   commander: string;
   commanderImage?: string;
@@ -45,31 +45,60 @@ export default function HomePage() {
     dailyCommanders[0]
   );
 
-  useEffect(() => {
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadHome() {
     const supabase = createClient();
 
-supabase.auth.getUser().then(({ data }) => {
-  if (!data.user) {
-    router.replace("/login");
-  }
-});
-    try {
-      
-      const savedDecks = localStorage.getItem("manaforge-decks");
-      const parsedDecks = savedDecks ? (JSON.parse(savedDecks) as Deck[]) : [];
+    const { data: authData } = await supabase.auth.getUser();
 
-      const dayIndex =
-        Math.floor(new Date().getTime() / 86400000) % dailyCommanders.length;
+    if (!authData.user) {
+      router.replace("/login");
+      return;
+    }
 
-      setDecks(parsedDecks);
+    const { data, error } = await supabase
+      .from("decks")
+      .select("id,name,commander,commander_image,colors,cards,price,wins,losses,decklist")
+      .eq("user_id", authData.user.id)
+      .order("created_at", { ascending: false });
+
+    const dayIndex =
+      Math.floor(new Date().getTime() / 86400000) % dailyCommanders.length;
+
+    if (!cancelled) {
+      if (error) {
+        console.error(error);
+        setDecks([]);
+      } else {
+        setDecks(
+          (data || []).map((deck) => ({
+            id: deck.id,
+            name: deck.name,
+            commander: deck.commander || "Commandant inconnu",
+            commanderImage: deck.commander_image || undefined,
+            colors: deck.colors || "Incolore",
+            cards: Number(deck.cards || 0),
+            price: Number(deck.price || 0),
+            wins: Number(deck.wins || 0),
+            losses: Number(deck.losses || 0),
+            decklist: Array.isArray(deck.decklist) ? deck.decklist : [],
+          }))
+        );
+      }
+
       setCommanderOfTheDay(dailyCommanders[dayIndex]);
-    } catch {
-      setDecks([]);
-      setCommanderOfTheDay(dailyCommanders[0]);
-    } finally {
       setHasLoaded(true);
     }
-  }, []);
+  }
+
+  void loadHome();
+
+  return () => {
+    cancelled = true;
+  };
+}, [router]);
 
   const stats = useMemo(() => {
     const totalDecks = decks.length;
