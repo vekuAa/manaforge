@@ -318,7 +318,7 @@ export default function DecksPage() {
       setCommanderSuggestions([]);
 
       if (userId) {
-        const savedDeck = await saveDeck(deck);
+        const savedDeck = deck;
         setDecks((current) => current.map((item) => (item.id === optimisticId ? savedDeck : item)));
         setSelectedDeckId(savedDeck.id);
         setSyncStatus("Deck sauvegardé dans Supabase.");
@@ -404,7 +404,7 @@ export default function DecksPage() {
       setArchidektUrl("");
 
       if (userId) {
-        const savedDeck = await saveDeck(deck);
+        const savedDeck = deck;
         setDecks((current) => current.map((item) => (item.id === optimisticId ? savedDeck : item)));
         setSelectedDeckId(savedDeck.id);
         setSyncStatus("Deck Archidekt sauvegardé dans Supabase.");
