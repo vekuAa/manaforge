@@ -115,8 +115,8 @@ export default function CollectionPage() {
       try {
         const response = await fetch(
           `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(
-            query
-          )}`
+            query,
+          )}`,
         );
 
         if (!response.ok) {
@@ -160,12 +160,12 @@ export default function CollectionPage() {
   const stats = useMemo(() => {
     const totalCards = filteredCards.reduce(
       (sum, card) => sum + card.quantity,
-      0
+      0,
     );
 
     const totalValue = filteredCards.reduce(
       (sum, card) => sum + card.quantity * card.price,
-      0
+      0,
     );
 
     return {
@@ -174,6 +174,48 @@ export default function CollectionPage() {
       totalValue: Math.round(totalValue * 100) / 100,
     };
   }, [filteredCards]);
+
+  const globalStats = useMemo(() => {
+    const totalCards = cards.reduce((sum, card) => sum + card.quantity, 0);
+    const totalValue = cards.reduce(
+      (sum, card) => sum + card.quantity * card.price,
+      0,
+    );
+
+    return {
+      totalCards,
+      uniqueCards: cards.length,
+      totalValue: Math.round(totalValue * 100) / 100,
+    };
+  }, [cards]);
+
+  const folderSummaries = useMemo(() => {
+    return folders
+      .filter((folder) => folder !== "Toutes")
+      .map((folder) => {
+        const folderCards = cards.filter((card) => card.folder === folder);
+        const totalQuantity = folderCards.reduce(
+          (sum, card) => sum + card.quantity,
+          0,
+        );
+        const totalValue = folderCards.reduce(
+          (sum, card) => sum + card.price * card.quantity,
+          0,
+        );
+        const previewImages = folderCards
+          .filter((card) => Boolean(card.image))
+          .slice(0, 4)
+          .map((card) => card.image as string);
+
+        return {
+          name: folder,
+          uniqueCards: folderCards.length,
+          totalQuantity,
+          totalValue: Math.round(totalValue * 100) / 100,
+          previewImages,
+        };
+      });
+  }, [cards, folders]);
 
   const fullsetProgress = useMemo(() => {
     if (fullsetCards.length === 0) {
@@ -189,13 +231,13 @@ export default function CollectionPage() {
       cards
         .filter(
           (card) =>
-            card.setCode?.toLowerCase() === fullsetCode.trim().toLowerCase()
+            card.setCode?.toLowerCase() === fullsetCode.trim().toLowerCase(),
         )
-        .map((card) => `${card.setCode}-${card.collectorNumber}`)
+        .map((card) => `${card.setCode}-${card.collectorNumber}`),
     );
 
     const missing = fullsetCards.filter(
-      (card) => !ownedKeys.has(`${card.set}-${card.collector_number}`)
+      (card) => !ownedKeys.has(`${card.set}-${card.collector_number}`),
     );
 
     const owned = fullsetCards.length - missing.length;
@@ -213,14 +255,21 @@ export default function CollectionPage() {
 
   function getCardImage(card: ScryfallCard) {
     return (
-      card.image_uris?.normal ||
-      card.card_faces?.[0]?.image_uris?.normal ||
-      ""
+      card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal || ""
     );
   }
 
   function getCardPrice(card: ScryfallCard) {
     return Number(card.prices?.eur || card.prices?.usd || 0);
+  }
+
+  function formatCurrency(value: number) {
+    return new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
   }
 
   function createFolder() {
@@ -241,8 +290,8 @@ export default function CollectionPage() {
 
     setCards((current) =>
       current.map((card) =>
-        card.folder === folder ? { ...card, folder: "Non classé" } : card
-      )
+        card.folder === folder ? { ...card, folder: "Non classé" } : card,
+      ),
     );
 
     setFolders((current) => current.filter((item) => item !== folder));
@@ -268,8 +317,8 @@ export default function CollectionPage() {
 
       const response = await fetch(
         `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
-          `!"${cleanName}" unique:prints`
-        )}&order=released`
+          `!"${cleanName}" unique:prints`,
+        )}&order=released`,
       );
 
       if (!response.ok) {
@@ -282,7 +331,7 @@ export default function CollectionPage() {
       setSelectedPrintId(data.data[0]?.id ?? "");
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Erreur pendant la recherche."
+        err instanceof Error ? err.message : "Erreur pendant la recherche.",
       );
     } finally {
       setIsSearching(false);
@@ -291,7 +340,7 @@ export default function CollectionPage() {
 
   async function addSelectedPrint() {
     const selectedPrint = printOptions.find(
-      (card) => card.id === selectedPrintId
+      (card) => card.id === selectedPrintId,
     );
 
     if (!selectedPrint) {
@@ -303,7 +352,8 @@ export default function CollectionPage() {
       setIsAdding(true);
       setError("");
 
-      const folder = selectedFolder === "Toutes" ? "Non classé" : selectedFolder;
+      const folder =
+        selectedFolder === "Toutes" ? "Non classé" : selectedFolder;
 
       setCards((current) => {
         const existing = current.find(
@@ -311,14 +361,14 @@ export default function CollectionPage() {
             card.name.toLowerCase() === selectedPrint.name.toLowerCase() &&
             card.setCode === selectedPrint.set &&
             card.collectorNumber === selectedPrint.collector_number &&
-            card.folder === folder
+            card.folder === folder,
         );
 
         if (existing) {
           return current.map((card) =>
             card.id === existing.id
               ? { ...card, quantity: card.quantity + quantity }
-              : card
+              : card,
           );
         }
 
@@ -365,7 +415,7 @@ export default function CollectionPage() {
       setError("");
 
       let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
-        `e:${cleanSet}`
+        `e:${cleanSet}`,
       )}&unique=prints&order=set`;
 
       const allCards: ScryfallCard[] = [];
@@ -387,7 +437,7 @@ export default function CollectionPage() {
     } catch (err) {
       setFullsetCards([]);
       setError(
-        err instanceof Error ? err.message : "Erreur pendant le fullset."
+        err instanceof Error ? err.message : "Erreur pendant le fullset.",
       );
     } finally {
       setIsLoadingFullset(false);
@@ -400,15 +450,15 @@ export default function CollectionPage() {
         .map((card) =>
           card.id === id
             ? { ...card, quantity: Math.max(0, card.quantity + amount) }
-            : card
+            : card,
         )
-        .filter((card) => card.quantity > 0)
+        .filter((card) => card.quantity > 0),
     );
   }
 
   function updateCardFolder(id: number, folder: string) {
     setCards((current) =>
-      current.map((card) => (card.id === id ? { ...card, folder } : card))
+      current.map((card) => (card.id === id ? { ...card, folder } : card)),
     );
   }
 
@@ -434,18 +484,29 @@ export default function CollectionPage() {
             ←
           </Link>
 
-          <div className="mt-6">
-            <p className="text-sm font-bold uppercase tracking-[0.28em] text-muted">
-              ManaForge
-            </p>
+          <div className="mt-6 overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] via-white/[0.04] to-black/30 p-5 shadow-2xl">
+            <div className="flex items-center justify-between gap-5">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold uppercase tracking-[0.28em] text-muted">
+                  ManaForge
+                </p>
 
-            <h1 className="mt-2 text-4xl font-black text-accent">
-              Collection
-            </h1>
+                <h1 className="mt-2 text-4xl font-black text-accent">
+                  Collection
+                </h1>
 
-            <p className="mt-2 text-muted">
-              Cartes, dossiers, éditions et suivi fullset.
-            </p>
+                <p className="mt-2 text-sm text-muted">
+                  Tes cartes, tes dossiers, ta valeur totale et ton suivi
+                  fullset.
+                </p>
+              </div>
+
+              <CircularValue
+                value={globalStats.totalValue}
+                label="Valeur totale"
+                caption={`${globalStats.totalCards} cartes`}
+              />
+            </div>
           </div>
         </header>
 
@@ -453,79 +514,45 @@ export default function CollectionPage() {
           <section className="mt-7">
             <div className="mb-4 flex items-end justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-black">Mes dossiers</h2>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
+                  Bibliothèque
+                </p>
+                <h2 className="mt-1 text-2xl font-black">Mes dossiers</h2>
                 <p className="mt-1 text-sm text-muted">
-                  Ouvre un dossier pour voir uniquement ses cartes.
+                  Une vue façon classeur : valeur, quantité et aperçu des
+                  cartes.
                 </p>
               </div>
 
               <button
                 onClick={() => setShowFolderModal(true)}
-                className="rounded-2xl bg-accent px-4 py-3 text-sm font-black text-black shadow-xl"
+                className="hidden items-center gap-2 rounded-2xl border border-yellow-300/30 bg-yellow-400 px-4 py-3 text-sm font-black text-black shadow-xl shadow-yellow-500/10 transition hover:scale-[1.02] sm:flex"
               >
-                + Dossier
+                <span aria-hidden="true">📁</span>
+                Nouveau
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {folders
-                .filter((folder) => folder !== "Toutes")
-                .map((folder) => {
-                  const folderCards = cards.filter(
-                    (card) => card.folder === folder
-                  );
-
-                  const folderQuantity = folderCards.reduce(
-                    (sum, card) => sum + card.quantity,
-                    0
-                  );
-
-                  const folderValue = folderCards.reduce(
-                    (sum, card) => sum + card.price * card.quantity,
-                    0
-                  );
-
-                  return (
-                    <div
-                      key={folder}
-                      className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] p-4 shadow-xl transition hover:scale-[1.02] hover:border-accent/50"
-                    >
-                      <button
-                        onClick={() => {
-                          setOpenedFolder(folder);
-                          setFolderFilter(folder);
-                        }}
-                        className="w-full text-left"
-                      >
-                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/15 text-3xl ring-1 ring-accent/20">
-                          📁
-                        </div>
-
-                        <p className="mt-4 line-clamp-1 text-lg font-black">
-                          {folder}
-                        </p>
-
-                        <p className="mt-1 text-xs font-bold uppercase tracking-wider text-muted">
-                          {folderCards.length} uniques · {folderQuantity} total
-                        </p>
-
-                        <p className="mt-3 text-lg font-black text-accent">
-                          {folderValue.toFixed(2)}€
-                        </p>
-                      </button>
-
-                      {folder !== "Non classé" && (
-                        <button
-                          onClick={() => deleteFolder(folder)}
-                          className="absolute right-3 top-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 opacity-80 transition hover:opacity-100"
-                          title="Supprimer le dossier"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+            <div
+              className={
+                viewMode === "grid"
+                  ? "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                  : "grid gap-3"
+              }
+            >
+              {folderSummaries.map((folder) => (
+                <FolderCard
+                  key={folder.name}
+                  folder={folder}
+                  viewMode={viewMode}
+                  formatCurrency={formatCurrency}
+                  onOpen={() => {
+                    setOpenedFolder(folder.name);
+                    setFolderFilter(folder.name);
+                  }}
+                  onDelete={() => deleteFolder(folder.name)}
+                />
+              ))}
             </div>
           </section>
         )}
@@ -558,20 +585,28 @@ export default function CollectionPage() {
         <div className="mt-8 grid grid-cols-3 gap-3">
           <StatCard label="Cartes" value={stats.totalCards} />
           <StatCard label="Uniques" value={stats.uniqueCards} />
-          <StatCard label="Valeur" value={`${stats.totalValue}€`} />
+          <StatCard label="Valeur" value={formatCurrency(stats.totalValue)} />
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 inline-flex rounded-2xl border border-white/10 bg-white/[0.05] p-1">
           <button
             onClick={() => setViewMode("grid")}
-            className={`btn-soft ${viewMode === "grid" ? "border-accent" : ""}`}
+            className={`rounded-xl px-4 py-2 text-sm font-black transition ${
+              viewMode === "grid"
+                ? "bg-accent text-black shadow-lg"
+                : "text-muted hover:bg-white/10 hover:text-white"
+            }`}
           >
             ⊞ Grille
           </button>
 
           <button
             onClick={() => setViewMode("list")}
-            className={`btn-soft ${viewMode === "list" ? "border-accent" : ""}`}
+            className={`rounded-xl px-4 py-2 text-sm font-black transition ${
+              viewMode === "list"
+                ? "bg-accent text-black shadow-lg"
+                : "text-muted hover:bg-white/10 hover:text-white"
+            }`}
           >
             ☰ Liste
           </button>
@@ -641,8 +676,7 @@ export default function CollectionPage() {
                 >
                   {printOptions.map((card) => (
                     <option key={card.id} value={card.id}>
-                      {card.set_name} · #{card.collector_number} ·{" "}
-                      {card.rarity}
+                      {card.set_name} · #{card.collector_number} · {card.rarity}
                     </option>
                   ))}
                 </select>
@@ -807,7 +841,7 @@ export default function CollectionPage() {
                   onDelete={() => deleteCard(card.id)}
                   onFolderChange={(folder) => updateCardFolder(card.id, folder)}
                 />
-              )
+              ),
             )
           )}
         </div>
@@ -815,10 +849,10 @@ export default function CollectionPage() {
 
       <button
         onClick={() => setShowFolderModal(true)}
-        className="fixed bottom-24 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-3xl font-black text-black shadow-2xl transition hover:scale-105"
+        className="fixed bottom-24 right-5 z-50 flex h-16 w-16 items-center justify-center rounded-full border border-yellow-200/60 bg-yellow-400 text-3xl shadow-2xl shadow-yellow-500/20 ring-4 ring-yellow-400/10 transition hover:scale-105 active:scale-95"
         aria-label="Créer un dossier"
       >
-        +
+        <span aria-hidden="true">📁</span>
       </button>
 
       {showFolderModal && (
@@ -826,10 +860,19 @@ export default function CollectionPage() {
           <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0f0f15] p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
-                  Collection
-                </p>
-                <h2 className="mt-2 text-2xl font-black">Nouveau dossier</h2>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-2xl shadow-lg shadow-yellow-500/10">
+                    📁
+                  </div>
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
+                      Collection
+                    </p>
+                    <h2 className="mt-1 text-2xl font-black">
+                      Nouveau dossier
+                    </h2>
+                  </div>
+                </div>
               </div>
 
               <button
@@ -882,6 +925,159 @@ export default function CollectionPage() {
 
       <BottomNav />
     </main>
+  );
+}
+
+function CircularValue({
+  value,
+  label,
+  caption,
+}: {
+  value: number;
+  label: string;
+  caption: string;
+}) {
+  const displayValue = new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(value);
+
+  return (
+    <div className="relative shrink-0">
+      <div className="absolute inset-0 rounded-full bg-accent/20 blur-2xl" />
+      <div
+        className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full border border-accent/40 bg-black/50 p-3 text-center shadow-2xl"
+        style={{
+          background:
+            "radial-gradient(circle at center, rgba(9,9,13,0.96) 0 58%, transparent 59%), conic-gradient(var(--accent, #facc15) 0 360deg)",
+        }}
+      >
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted">
+          {label}
+        </p>
+        <p className="mt-1 max-w-[96px] truncate text-xl font-black text-accent">
+          {displayValue}
+        </p>
+        <p className="mt-1 text-[10px] font-bold text-muted">{caption}</p>
+      </div>
+    </div>
+  );
+}
+
+function FolderCard({
+  folder,
+  viewMode,
+  formatCurrency,
+  onOpen,
+  onDelete,
+}: {
+  folder: {
+    name: string;
+    uniqueCards: number;
+    totalQuantity: number;
+    totalValue: number;
+    previewImages: string[];
+  };
+  viewMode: "grid" | "list";
+  formatCurrency: (value: number) => string;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const isDefaultFolder = folder.name === "Non classé";
+
+  if (viewMode === "list") {
+    return (
+      <div className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] p-3 shadow-xl transition hover:border-yellow-300/40 hover:bg-white/[0.08]">
+        <button
+          onClick={onOpen}
+          className="flex w-full items-center gap-4 text-left"
+        >
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-400 text-3xl shadow-lg shadow-yellow-500/10">
+            📁
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-lg font-black">{folder.name}</p>
+            <p className="mt-1 text-xs font-bold uppercase tracking-wider text-muted">
+              {folder.uniqueCards} uniques · {folder.totalQuantity} cartes
+            </p>
+          </div>
+
+          <p className="shrink-0 text-lg font-black text-accent">
+            {formatCurrency(folder.totalValue)}
+          </p>
+        </button>
+
+        {!isDefaultFolder && (
+          <button
+            onClick={onDelete}
+            className="absolute right-3 top-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 opacity-70 transition hover:opacity-100"
+            title="Supprimer le dossier"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] via-white/[0.04] to-black/40 p-4 shadow-xl transition hover:-translate-y-0.5 hover:border-yellow-300/40 hover:shadow-2xl">
+      <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-yellow-400/10 blur-2xl" />
+
+      <button onClick={onOpen} className="relative z-10 w-full text-left">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-yellow-400 text-4xl shadow-lg shadow-yellow-500/10 ring-4 ring-yellow-400/10">
+            📁
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-right">
+            <p className="text-[10px] font-black uppercase tracking-wider text-muted">
+              Valeur
+            </p>
+            <p className="text-sm font-black text-accent">
+              {formatCurrency(folder.totalValue)}
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-5 line-clamp-1 text-xl font-black">{folder.name}</p>
+        <p className="mt-1 text-xs font-bold uppercase tracking-wider text-muted">
+          {folder.uniqueCards} uniques · {folder.totalQuantity} cartes
+        </p>
+
+        <div className="mt-4 flex h-20 items-end gap-2 overflow-hidden rounded-2xl border border-white/10 bg-black/20 p-2">
+          {folder.previewImages.length > 0 ? (
+            folder.previewImages.map((image, index) => (
+              <img
+                key={`${image}-${index}`}
+                src={image}
+                alt="Aperçu carte"
+                className="h-16 w-11 rounded-lg object-cover shadow-lg"
+                style={{
+                  transform: `translateY(${index % 2 === 0 ? 0 : 8}px)`,
+                }}
+              />
+            ))
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-sm font-bold text-muted">
+              Dossier vide
+            </div>
+          )}
+        </div>
+      </button>
+
+      {!isDefaultFolder && (
+        <button
+          onClick={onDelete}
+          className="absolute right-3 top-3 z-20 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 opacity-0 transition group-hover:opacity-100"
+          title="Supprimer le dossier"
+        >
+          ✕
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1023,13 +1219,7 @@ function CardListItem({
   );
 }
 
-function StatCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: number | string;
-}) {
+function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-center">
       <p className="text-2xl font-black text-accent">{value}</p>
