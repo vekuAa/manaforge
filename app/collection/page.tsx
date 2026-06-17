@@ -254,6 +254,8 @@ export default function CollectionPage() {
 
         if (!cancelled) setUserId(currentUser.id);
 
+        const migrationFlagKey = `manaforge-cloud-migrated-${currentUser.id}`;
+        const alreadyMigrated = localStorage.getItem(migrationFlagKey) === "true";
         const localFolderNames = Array.from(new Set(localFolders.filter((folder) => folder !== "Toutes")));
         const foldersToEnsure = localFolderNames.length > 0 ? localFolderNames : ["Non classé", "Commander", "Trade", "Staples"];
 
@@ -266,7 +268,9 @@ export default function CollectionPage() {
         if (remoteError) throw remoteError;
 
         const existingNames = new Set((remoteFolders || []).map((folder) => folder.name));
-        const missingFolders = foldersToEnsure
+        const shouldImportLocalFolders = !alreadyMigrated && existingNames.size === 0;
+        const foldersSource = shouldImportLocalFolders ? foldersToEnsure : ["Non classé"];
+        const missingFolders = foldersSource
           .filter((folder) => !existingNames.has(folder))
           .map((folder) => ({
             user_id: currentUser.id,
@@ -335,6 +339,10 @@ export default function CollectionPage() {
           localStorage.removeItem("manaforge-folders");
           localStorage.removeItem("manaforge-folder-colors");
         }
+
+        localStorage.setItem(migrationFlagKey, "true");
+        localStorage.removeItem("manaforge-folders");
+        localStorage.removeItem("manaforge-folder-colors");
 
         if (!cancelled) {
           setCards(cloudCards);
@@ -640,17 +648,25 @@ export default function CollectionPage() {
   async function searchPrints() {
     const cleanName = cardName.trim();
     if (!cleanName) return setError("Entre le nom d’une carte.");
+
     try {
       setIsSearching(true);
       setError("");
       setPrintOptions([]);
-      const response = await fetch(
-        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!\"${cleanName}\" unique:prints`)}&order=released`,
-      );
-      if (!response.ok) throw new Error("Carte introuvable sur Scryfall.");
-      const data = (await response.json()) as ScryfallSearchResponse;
-      setPrintOptions(data.data.slice(0, 30));
-      setSelectedPrintId(data.data[0]?.id ?? "");
+
+      let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!\"${cleanName}\" unique:prints`)}&order=released`;
+      const allPrints: ScryfallCard[] = [];
+
+      while (url && allPrints.length < 300) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Carte introuvable sur Scryfall.");
+        const data = (await response.json()) as ScryfallSearchResponse;
+        allPrints.push(...data.data);
+        url = data.has_more && data.next_page ? data.next_page : "";
+      }
+
+      setPrintOptions(allPrints);
+      setSelectedPrintId(allPrints[0]?.id ?? "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur pendant la recherche.");
     } finally {
