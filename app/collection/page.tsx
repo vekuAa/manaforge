@@ -392,21 +392,11 @@ export default function CollectionPage() {
   }
 
   async function loadTesseract() {
-    const existing = (window as unknown as { Tesseract?: TesseractApi }).Tesseract;
-    if (existing) return existing;
-
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("Impossible de charger le moteur OCR."));
-      document.body.appendChild(script);
-    });
-
-    const loaded = (window as unknown as { Tesseract?: TesseractApi }).Tesseract;
-    if (!loaded) throw new Error("Moteur OCR indisponible.");
-    return loaded;
+    // Scanner local : nécessite `npm install tesseract.js`.
+    // On évite le CDN pour avoir une version plus stable dans l’app.
+    const tesseract = (await import("tesseract.js")) as unknown as TesseractApi;
+    if (!tesseract?.createWorker) throw new Error("Moteur OCR indisponible. Installe tesseract.js avec npm install tesseract.js.");
+    return tesseract;
   }
 
   function extractPossibleCardName(text: string) {
@@ -1318,40 +1308,108 @@ function ScanModal({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraStatus, setCameraStatus] = useState("Ouverture de la caméra...");
+  const [cameraReady, setCameraReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function startCamera() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setCameraStatus("Caméra live indisponible sur ce navigateur. Utilise le bouton photo en secours.");
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1440 },
+            height: { ideal: 1920 },
+          },
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        setCameraReady(true);
+        setCameraStatus("Place la carte dans le cadre, puis appuie sur Scanner.");
+      } catch {
+        setCameraStatus("Caméra refusée ou indisponible. Utilise le bouton photo en secours.");
+      }
+    }
+
+    void startCamera();
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  function captureFrame() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (blob) onFile(blob);
+    }, "image/jpeg", 0.95);
+  }
+
   return (
     <div className="fixed inset-0 z-[100] bg-[#101116] text-white">
       <div className="mx-auto flex h-full max-w-md flex-col px-4 pb-4 pt-3">
         <div className="flex items-center justify-between">
           <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-xl">✕</button>
           <h2 className="font-black">Scanner une carte</h2>
-          <div className="h-10 w-10" />
+          <button onClick={() => fileInputRef.current?.click()} className="rounded-full bg-white/[0.06] px-3 py-2 text-xs font-black text-white/80">Photo</button>
         </div>
 
-        <div className="mt-4 rounded-2xl border border-orange-400/20 bg-orange-400/10 p-3 text-sm font-bold text-orange-100">
-          Mode provisoire : OCR navigateur + Scryfall. Pour un scanner fiable comme ManaBox, il faudra ajouter un vrai moteur de reconnaissance image côté serveur.
+        <div className="mt-4 rounded-2xl border border-orange-400/20 bg-orange-400/10 p-3 text-xs font-bold leading-relaxed text-orange-100">
+          Scanner web v1 : caméra live + OCR local + Scryfall. Ce n’est pas encore une reconnaissance image entraînée comme ManaBox, donc la lumière, le cadrage et la netteté restent importants.
         </div>
 
-        <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-black/25 p-4">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="relative mx-auto flex aspect-[63/88] w-full max-w-[295px] items-center justify-center overflow-hidden rounded-3xl border-2 border-dashed border-white/20 bg-black/60 text-center active:scale-[0.99]"
-          >
+        <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-black/25 p-3">
+          <div className="relative mx-auto aspect-[63/88] w-full max-w-[310px] overflow-hidden rounded-3xl bg-black/70 shadow-2xl ring-1 ring-white/10">
             {scanPreview ? (
-              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain opacity-90" />
+              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain opacity-95" />
             ) : (
-              <div className="px-6">
-                <p className="text-4xl">📷</p>
-                <p className="mt-3 text-lg font-black">Ouvrir l’appareil photo</p>
-                <p className="mt-2 text-sm font-bold text-white/55">Photo droite, nette, nom et bas de carte visibles.</p>
+              <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
+            )}
+
+            <div className="pointer-events-none absolute inset-[7%] rounded-2xl border-2 border-white/85 shadow-[0_0_0_999px_rgba(0,0,0,0.25)]" />
+            <span className="pointer-events-none absolute left-6 top-6 h-12 w-12 rounded-tl-2xl border-l-4 border-t-4 border-[#f59e0b]" />
+            <span className="pointer-events-none absolute right-6 top-6 h-12 w-12 rounded-tr-2xl border-r-4 border-t-4 border-[#f59e0b]" />
+            <span className="pointer-events-none absolute bottom-6 left-6 h-12 w-12 rounded-bl-2xl border-b-4 border-l-4 border-[#f59e0b]" />
+            <span className="pointer-events-none absolute bottom-6 right-6 h-12 w-12 rounded-br-2xl border-b-4 border-r-4 border-[#f59e0b]" />
+
+            {!cameraReady && !scanPreview && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60 px-8 text-center text-sm font-bold text-white/70">
+                {cameraStatus}
               </div>
             )}
-            <span className="absolute left-5 top-5 h-11 w-11 rounded-tl-2xl border-l-4 border-t-4 border-white/80" />
-            <span className="absolute right-5 top-5 h-11 w-11 rounded-tr-2xl border-r-4 border-t-4 border-white/80" />
-            <span className="absolute bottom-5 left-5 h-11 w-11 rounded-bl-2xl border-b-4 border-l-4 border-white/80" />
-            <span className="absolute bottom-5 right-5 h-11 w-11 rounded-br-2xl border-b-4 border-r-4 border-white/80" />
-          </button>
+          </div>
 
+          <canvas ref={canvasRef} className="hidden" />
           <input
             ref={fileInputRef}
             type="file"
@@ -1365,8 +1423,17 @@ function ScanModal({
             }}
           />
 
-          <p className="mt-4 min-h-10 text-center text-sm font-bold text-white/60">
-            {isScanning ? "Analyse OCR en cours..." : scanStatus || "Appuie sur le cadre pour ouvrir directement l’appareil photo."}
+          <button
+            type="button"
+            disabled={!cameraReady || isScanning}
+            onClick={captureFrame}
+            className="mt-4 w-full rounded-2xl bg-[#f59e0b] py-4 font-black text-black disabled:opacity-40"
+          >
+            {isScanning ? "Analyse en cours..." : "Scanner la carte"}
+          </button>
+
+          <p className="mt-3 min-h-10 text-center text-sm font-bold text-white/60">
+            {isScanning ? "Lecture du nom et du numéro..." : scanStatus || cameraStatus}
           </p>
 
           {scanResult && (
@@ -1401,7 +1468,7 @@ function ScanModal({
         <button
           disabled={!scanResult || isScanning}
           onClick={onConfirm}
-          className="mt-3 w-full rounded-2xl bg-[#f59e0b] py-4 font-black text-black disabled:opacity-40"
+          className="mt-3 w-full rounded-2xl bg-white py-4 font-black text-black disabled:opacity-40"
         >
           Ajouter la carte au dossier
         </button>
@@ -1429,28 +1496,77 @@ function FullsetAddModal({
   onClose: () => void;
   onConfirm: () => void;
 }) {
+  const cardImage = getCardImage(card);
+
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 backdrop-blur">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#17181f] p-5 text-white">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-black">Ajouter au dossier</h2>
-          <button onClick={onClose}>✕</button>
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/85 p-3 backdrop-blur-md">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-white/10 bg-[#17181f] p-4 text-white shadow-2xl md:p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-black">Aperçu de la carte</h2>
+            <p className="text-sm font-bold text-white/50">Choisis le dossier puis ajoute-la à ta collection.</p>
+          </div>
+          <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-lg font-black">✕</button>
         </div>
-        <div className="mt-4 flex gap-3 rounded-2xl bg-white/[0.06] p-3">
-          {getCardArt(card) && <img src={getCardArt(card)} alt={card.name} className="h-20 w-20 rounded-xl object-cover" />}
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-black">{card.name}</p>
-            <p className="text-xs text-white/60">{card.set_name} · #{card.collector_number}</p>
-            <p className="mt-1 font-black">{formatCurrency(getCardPrice(card), 2)}</p>
+
+        <div className="mt-5 grid gap-5 md:grid-cols-[320px_1fr] md:items-start">
+          <div className="mx-auto w-full max-w-[320px]">
+            {cardImage ? (
+              <img
+                src={cardImage}
+                alt={card.name}
+                className="aspect-[63/88] w-full rounded-2xl object-cover shadow-2xl ring-1 ring-white/10"
+              />
+            ) : (
+              <div className="flex aspect-[63/88] w-full items-center justify-center rounded-2xl bg-black/40 text-center text-sm font-bold text-white/50">
+                Image indisponible
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl bg-white/[0.055] p-4">
+            <p className="text-2xl font-black leading-tight">{card.name}</p>
+            <p className="mt-2 text-sm font-bold text-white/60">{card.type_line || "Type inconnu"}</p>
+
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+              <div className="rounded-xl bg-black/25 p-3">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-white/40">Set</p>
+                <p className="mt-1 font-black">{card.set?.toUpperCase()} · {card.set_name}</p>
+              </div>
+              <div className="rounded-xl bg-black/25 p-3">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-white/40">Numéro</p>
+                <p className="mt-1 font-black">#{card.collector_number || "—"}</p>
+              </div>
+              <div className="rounded-xl bg-black/25 p-3">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-white/40">Rareté</p>
+                <p className="mt-1 font-black capitalize">{card.rarity || "—"}</p>
+              </div>
+              <div className="rounded-xl bg-black/25 p-3">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-white/40">Prix</p>
+                <p className="mt-1 font-black text-[#f59e0b]">{formatCurrency(getCardPrice(card), 2)}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-[.7fr_1.3fr] gap-2">
+              <input
+                type="number"
+                min={1}
+                value={quantity}
+                onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))}
+                className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none"
+              />
+              <select
+                value={selectedFolder}
+                onChange={(event) => setSelectedFolder(event.target.value)}
+                className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none"
+              >
+                {folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+              </select>
+            </div>
+
+            <button onClick={onConfirm} className="mt-5 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black">Ajouter au dossier</button>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-[.7fr_1.3fr] gap-2">
-          <input type="number" min={1} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
-          <select value={selectedFolder} onChange={(event) => setSelectedFolder(event.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">
-            {folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}
-          </select>
-        </div>
-        <button onClick={onConfirm} className="mt-5 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black">Ajouter</button>
       </div>
     </div>
   );
