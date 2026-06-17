@@ -100,6 +100,13 @@ export default function CollectionPage() {
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [folderColors, setFolderColors] = useState<Record<string, string>>(DEFAULT_FOLDER_COLORS);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [showScanModal, setShowScanModal] = useState(false);
+  const [scanSetCode, setScanSetCode] = useState("");
+  const [scanCollectorNumber, setScanCollectorNumber] = useState("");
+  const [scanFolder, setScanFolder] = useState("Non classé");
+  const [scanQuantity, setScanQuantity] = useState(1);
+  const [scanPreview, setScanPreview] = useState("");
+  const [isScanAdding, setIsScanAdding] = useState(false);
 
   const [fullsetCode, setFullsetCode] = useState("");
   const [fullsetCards, setFullsetCards] = useState<ScryfallCard[]>([]);
@@ -115,7 +122,13 @@ export default function CollectionPage() {
       const savedFolders = localStorage.getItem("manaforge-folders");
       const savedFolderColors = localStorage.getItem("manaforge-folder-colors");
 
-      setCards(savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : []);
+      const parsedCards = savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : [];
+      setCards(
+        parsedCards.map((card) => ({
+          ...card,
+          folder: card.folder || "Non classé",
+        })),
+      );
 
       if (savedFolders) {
         setFolders(JSON.parse(savedFolders) as string[]);
@@ -232,7 +245,7 @@ export default function CollectionPage() {
     return folders
       .filter((folder) => folder !== "Toutes")
       .map((folder) => {
-        const folderCards = cards.filter((card) => card.folder === folder);
+        const folderCards = cards.filter((card) => (card.folder || "Non classé") === folder);
         const totalQuantity = folderCards.reduce(
           (sum, card) => sum + card.quantity,
           0,
@@ -241,17 +254,12 @@ export default function CollectionPage() {
           (sum, card) => sum + card.price * card.quantity,
           0,
         );
-        const previewImages = folderCards
-          .filter((card) => Boolean(card.image))
-          .slice(0, 4)
-          .map((card) => card.image as string);
 
         return {
           name: folder,
           uniqueCards: folderCards.length,
           totalQuantity,
           totalValue: Math.round(totalValue * 100) / 100,
-          previewImages,
           color: folderColors[folder] || getFallbackFolderColor(folder),
         };
       });
@@ -292,6 +300,16 @@ export default function CollectionPage() {
       missing,
     };
   }, [cards, fullsetCards, fullsetCode]);
+
+  const visibleCards = useMemo(() => {
+    if (openedFolder) {
+      return cards.filter(
+        (card) => (card.folder || "Non classé") === openedFolder,
+      );
+    }
+
+    return filteredCards;
+  }, [cards, filteredCards, openedFolder]);
 
   function getCardImage(card: ScryfallCard) {
     return (
@@ -452,6 +470,76 @@ export default function CollectionPage() {
     }
   }
 
+  async function addScannedCard() {
+    const cleanSet = scanSetCode.trim().toLowerCase();
+    const cleanNumber = scanCollectorNumber.trim();
+
+    if (!cleanSet || !cleanNumber) {
+      setError("Entre le code d’extension et le numéro de collection.");
+      return;
+    }
+
+    try {
+      setIsScanAdding(true);
+      setError("");
+
+      const response = await fetch(
+        `https://api.scryfall.com/cards/${encodeURIComponent(cleanSet)}/${encodeURIComponent(cleanNumber)}`,
+      );
+
+      if (!response.ok) {
+        throw new Error("Carte introuvable avec ce code et ce numéro.");
+      }
+
+      const card = (await response.json()) as ScryfallCard;
+      const folder = scanFolder === "Toutes" ? "Non classé" : scanFolder;
+
+      setCards((current) => {
+        const existing = current.find(
+          (item) =>
+            item.setCode?.toLowerCase() === card.set?.toLowerCase() &&
+            item.collectorNumber === card.collector_number &&
+            (item.folder || "Non classé") === folder,
+        );
+
+        if (existing) {
+          return current.map((item) =>
+            item.id === existing.id
+              ? { ...item, quantity: item.quantity + scanQuantity }
+              : item,
+          );
+        }
+
+        return [
+          ...current,
+          {
+            id: Date.now(),
+            name: card.name,
+            image: getCardImage(card),
+            quantity: scanQuantity,
+            price: getCardPrice(card),
+            typeLine: card.type_line || "",
+            setName: card.set_name || "Extension inconnue",
+            setCode: card.set || "",
+            collectorNumber: card.collector_number || "",
+            rarity: card.rarity || "unknown",
+            folder,
+          },
+        ];
+      });
+
+      setScanSetCode("");
+      setScanCollectorNumber("");
+      setScanQuantity(1);
+      setScanPreview("");
+      setShowScanModal(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur pendant le scan.");
+    } finally {
+      setIsScanAdding(false);
+    }
+  }
+
   async function loadFullset() {
     const cleanSet = fullsetCode.trim().toLowerCase();
 
@@ -587,7 +675,7 @@ export default function CollectionPage() {
             <div
               className={
                 viewMode === "grid"
-                  ? "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                  ? "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
                   : "grid gap-3"
               }
             >
@@ -650,8 +738,8 @@ export default function CollectionPage() {
             onClick={() => setViewMode("grid")}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               viewMode === "grid"
-                ? "border border-accent/50 bg-accent/20 text-white shadow-lg"
-                : "text-muted hover:bg-white/10 hover:text-white"
+                ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
+                : "!text-white/70 hover:bg-white/10 hover:!text-white"
             }`}
           >
             ⊞ Grille
@@ -661,8 +749,8 @@ export default function CollectionPage() {
             onClick={() => setViewMode("list")}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               viewMode === "list"
-                ? "border border-accent/50 bg-accent/20 text-white shadow-lg"
-                : "text-muted hover:bg-white/10 hover:text-white"
+                ? "border border-accent/50 bg-accent/20 !text-white shadow-lg"
+                : "!text-white/70 hover:bg-white/10 hover:!text-white"
             }`}
           >
             ☰ Liste
@@ -670,7 +758,15 @@ export default function CollectionPage() {
         </div>
 
         <div className="mt-6 card-premium p-5">
-          <h2 className="text-xl font-black">Ajouter une carte</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-black">Ajouter une carte</h2>
+            <button
+              onClick={() => setShowScanModal(true)}
+              className="rounded-2xl border border-yellow-300/30 bg-yellow-400 px-4 py-2 text-sm font-black text-black shadow-lg shadow-yellow-500/10"
+            >
+              📷 Scanner
+            </button>
+          </div>
 
           <div className="mt-5 space-y-3">
             <div className="relative">
@@ -867,41 +963,43 @@ export default function CollectionPage() {
           </div>
         </div>
 
-        <div
-          className={
-            viewMode === "grid"
-              ? "mt-5 grid grid-cols-2 gap-3"
-              : "mt-5 grid gap-3"
-          }
-        >
-          {filteredCards.length === 0 ? (
-            <div className="card-soft col-span-2 p-5 text-center text-muted">
-              Aucune carte trouvée.
-            </div>
-          ) : (
-            filteredCards.map((card) =>
-              viewMode === "grid" ? (
-                <CardGridItem
-                  key={card.id}
-                  card={card}
-                  onMinus={() => updateQuantity(card.id, -1)}
-                  onPlus={() => updateQuantity(card.id, 1)}
-                  onDelete={() => deleteCard(card.id)}
-                />
-              ) : (
-                <CardListItem
-                  key={card.id}
-                  card={card}
-                  folders={folders}
-                  onMinus={() => updateQuantity(card.id, -1)}
-                  onPlus={() => updateQuantity(card.id, 1)}
-                  onDelete={() => deleteCard(card.id)}
-                  onFolderChange={(folder) => updateCardFolder(card.id, folder)}
-                />
-              ),
-            )
-          )}
-        </div>
+        {openedFolder && (
+          <div
+            className={
+              viewMode === "grid"
+                ? "mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3"
+                : "mt-5 grid gap-3"
+            }
+          >
+            {visibleCards.length === 0 ? (
+              <div className="card-soft col-span-2 p-5 text-center text-muted">
+                Ce dossier est vide.
+              </div>
+            ) : (
+              visibleCards.map((card) =>
+                viewMode === "grid" ? (
+                  <CardGridItem
+                    key={card.id}
+                    card={card}
+                    onMinus={() => updateQuantity(card.id, -1)}
+                    onPlus={() => updateQuantity(card.id, 1)}
+                    onDelete={() => deleteCard(card.id)}
+                  />
+                ) : (
+                  <CardListItem
+                    key={card.id}
+                    card={card}
+                    folders={folders}
+                    onMinus={() => updateQuantity(card.id, -1)}
+                    onPlus={() => updateQuantity(card.id, 1)}
+                    onDelete={() => deleteCard(card.id)}
+                    onFolderChange={(folder) => updateCardFolder(card.id, folder)}
+                  />
+                ),
+              )
+            )}
+          </div>
+        )}
       </section>
 
       <button
@@ -911,6 +1009,100 @@ export default function CollectionPage() {
       >
         <span aria-hidden="true">📁</span>
       </button>
+
+      {showScanModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0f0f15] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-accent">
+                  Scan carte
+                </p>
+                <h2 className="mt-1 text-2xl font-black">Ajouter par numéro</h2>
+                <p className="mt-2 text-sm text-muted">
+                  Prends la carte en photo, puis renseigne le code d’extension et le numéro en bas de carte.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setShowScanModal(false)}
+                className="rounded-2xl bg-white/10 px-3 py-2 font-black"
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-3xl border border-dashed border-white/15 bg-black/20 p-5 text-center transition hover:bg-white/[0.06]">
+              {scanPreview ? (
+                <img src={scanPreview} alt="Carte scannée" className="max-h-64 rounded-2xl object-contain" />
+              ) : (
+                <>
+                  <span className="text-4xl">📷</span>
+                  <span className="mt-2 text-sm font-bold text-muted">Ouvrir la caméra</span>
+                </>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  setScanPreview(URL.createObjectURL(file));
+                }}
+              />
+            </label>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <input
+                value={scanSetCode}
+                onChange={(event) => setScanSetCode(event.target.value)}
+                placeholder="Code : mh3"
+                className="input-premium uppercase"
+              />
+              <input
+                value={scanCollectorNumber}
+                onChange={(event) => setScanCollectorNumber(event.target.value)}
+                placeholder="N° : 123"
+                className="input-premium"
+              />
+            </div>
+
+            <div className="mt-3 grid grid-cols-[0.7fr_1.3fr] gap-3">
+              <input
+                type="number"
+                min={1}
+                value={scanQuantity}
+                onChange={(event) => setScanQuantity(Math.max(1, Number(event.target.value)))}
+                className="input-premium"
+              />
+              <select
+                value={scanFolder}
+                onChange={(event) => setScanFolder(event.target.value)}
+                className="input-premium"
+              >
+                {folders
+                  .filter((folder) => folder !== "Toutes")
+                  .map((folder) => (
+                    <option key={folder} value={folder}>
+                      {folder}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <button
+              onClick={addScannedCard}
+              disabled={isScanAdding}
+              className="btn-primary mt-4 w-full disabled:opacity-50"
+            >
+              {isScanAdding ? "Ajout..." : "Ajouter la carte scannée"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showFolderModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
@@ -1102,7 +1294,6 @@ function FolderCard({
     uniqueCards: number;
     totalQuantity: number;
     totalValue: number;
-    previewImages: string[];
     color: string;
   };
   viewMode: "grid" | "list";
@@ -1115,128 +1306,104 @@ function FolderCard({
 
   if (viewMode === "list") {
     return (
-      <div className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] p-3 shadow-xl transition hover:border-yellow-300/40 hover:bg-white/[0.08]">
-        <button
-          onClick={onOpen}
-          className="flex w-full items-center gap-4 text-left"
-        >
+      <div className="group relative rounded-3xl border border-white/10 bg-white/[0.055] p-3 transition hover:border-yellow-300/40 hover:bg-white/[0.08]">
+        <button onClick={onOpen} className="flex w-full items-center gap-3 text-left">
           <div
-            className="flex h-14 w-14 items-center justify-center rounded-2xl text-3xl shadow-lg"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-2xl shadow-lg"
             style={{ backgroundColor: folder.color }}
           >
             📁
           </div>
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-lg font-black">{folder.name}</p>
-            <p className="mt-1 text-xs font-bold uppercase tracking-wider text-muted">
-              {folder.uniqueCards} uniques · {folder.totalQuantity} cartes
+            <p className="truncate text-base font-black">{folder.name}</p>
+            <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+              {folder.totalQuantity} cartes · {folder.uniqueCards} uniques
             </p>
           </div>
 
-          <div className="shrink-0 text-right">
-            <p className="text-lg font-black text-accent">
-              {formatCurrency(folder.totalValue)}
-            </p>
-            <div className="mt-2 flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-              {FOLDER_COLOR_PALETTE.slice(0, 5).map((color) => (
-                <span
-                  key={color}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onColorChange(color)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") onColorChange(color);
-                  }}
-                  className="h-3 w-3 rounded-full border border-white/20"
-                  style={{ backgroundColor: color }}
-                  aria-label={`Couleur ${color}`}
-                />
-              ))}
-            </div>
-          </div>
+          <p className="shrink-0 text-sm font-black text-accent">
+            {formatCurrency(folder.totalValue)}
+          </p>
         </button>
 
-        {!isDefaultFolder && (
-          <button
-            onClick={onDelete}
-            className="absolute right-3 top-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 opacity-70 transition hover:opacity-100"
-            title="Supprimer le dossier"
-          >
-            ✕
-          </button>
-        )}
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3">
+          <div className="flex gap-1.5">
+            {FOLDER_COLOR_PALETTE.map((color) => (
+              <button
+                key={color}
+                type="button"
+                onClick={() => onColorChange(color)}
+                className={`h-4 w-4 rounded-full border transition ${
+                  folder.color === color ? "scale-110 border-white" : "border-white/10"
+                }`}
+                style={{ backgroundColor: color }}
+                aria-label={`Couleur ${color}`}
+              />
+            ))}
+          </div>
+
+          {!isDefaultFolder && (
+            <button
+              onClick={onDelete}
+              className="rounded-xl bg-red-500/10 px-2.5 py-1.5 text-xs font-black text-red-300"
+            >
+              Supprimer
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] via-white/[0.04] to-black/40 p-4 shadow-xl transition hover:-translate-y-0.5 hover:border-yellow-300/40 hover:shadow-2xl">
-      <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full blur-2xl"
-        style={{ backgroundColor: `${folder.color}22` }} />
-
-      <button onClick={onOpen} className="relative z-10 w-full text-left">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex h-16 w-16 items-center justify-center rounded-3xl text-4xl shadow-lg ring-4 ring-white/10"
-            style={{ backgroundColor: folder.color }}>
+    <div className="group relative rounded-3xl border border-white/10 bg-white/[0.055] p-3 transition hover:-translate-y-0.5 hover:border-yellow-300/40 hover:bg-white/[0.08]">
+      <button onClick={onOpen} className="w-full text-left">
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-2xl shadow-lg ring-2 ring-white/10"
+            style={{ backgroundColor: folder.color }}
+          >
             📁
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-right">
-            <p className="text-[10px] font-black uppercase tracking-wider text-muted">
-              Valeur
-            </p>
-            <p className="text-sm font-black text-accent">
-              {formatCurrency(folder.totalValue)}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-base font-black">{folder.name}</p>
+            <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+              {folder.totalQuantity} cartes
             </p>
           </div>
         </div>
 
-        <div className="mt-4 flex gap-2" onClick={(event) => event.stopPropagation()}>
-          {FOLDER_COLOR_PALETTE.slice(0, 6).map((color) => (
-            <button
-              key={color}
-              type="button"
-              onClick={() => onColorChange(color)}
-              className={`h-5 w-5 rounded-full border transition ${
-                folder.color === color ? "scale-110 border-white" : "border-white/10"
-              }`}
-              style={{ backgroundColor: color }}
-              aria-label={`Couleur ${color}`}
-            />
-          ))}
-        </div>
-
-        <p className="mt-5 line-clamp-1 text-xl font-black">{folder.name}</p>
-        <p className="mt-1 text-xs font-bold uppercase tracking-wider text-muted">
-          {folder.uniqueCards} uniques · {folder.totalQuantity} cartes
-        </p>
-
-        <div className="mt-4 flex h-20 items-end gap-2 overflow-hidden rounded-2xl border border-white/10 bg-black/20 p-2">
-          {folder.previewImages.length > 0 ? (
-            folder.previewImages.map((image, index) => (
-              <img
-                key={`${image}-${index}`}
-                src={image}
-                alt="Aperçu carte"
-                className="h-16 w-11 rounded-lg object-cover shadow-lg"
-                style={{
-                  transform: `translateY(${index % 2 === 0 ? 0 : 8}px)`,
-                }}
-              />
-            ))
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm font-bold text-muted">
-              Dossier vide
-            </div>
-          )}
+        <div className="mt-3 flex items-end justify-between gap-3">
+          <p className="text-lg font-black text-accent">
+            {formatCurrency(folder.totalValue)}
+          </p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted">
+            {folder.uniqueCards} uniques
+          </p>
         </div>
       </button>
+
+      <div className="mt-3 flex gap-1.5 overflow-hidden border-t border-white/10 pt-3">
+        {FOLDER_COLOR_PALETTE.map((color) => (
+          <button
+            key={color}
+            type="button"
+            onClick={() => onColorChange(color)}
+            className={`h-3.5 w-3.5 shrink-0 rounded-full border transition ${
+              folder.color === color ? "scale-110 border-white" : "border-white/10"
+            }`}
+            style={{ backgroundColor: color }}
+            aria-label={`Couleur ${color}`}
+          />
+        ))}
+      </div>
 
       {!isDefaultFolder && (
         <button
           onClick={onDelete}
-          className="absolute right-3 top-3 z-20 rounded-xl bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 opacity-0 transition group-hover:opacity-100"
+          className="absolute right-2 top-2 rounded-xl bg-black/40 px-2 py-1 text-xs font-black text-red-300 opacity-0 transition group-hover:opacity-100"
           title="Supprimer le dossier"
         >
           ✕
