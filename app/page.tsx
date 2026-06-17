@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import BottomNav from "@/components/BottomNav";
+import ProfileButton from "@/components/ProfileButton";
 
 type DeckCard = {
   name: string;
@@ -127,9 +128,11 @@ export default function HomePage() {
     );
   }
 
-  return (
-    <main className="page">
-      <section className="container-app pb-28">
+return (
+  <main className="page">
+    <ProfileButton />
+
+    <section className="container-app pb-28">
         <header>
           <p className="text-sm font-bold uppercase tracking-[0.28em] text-muted">
             Commander / EDH
