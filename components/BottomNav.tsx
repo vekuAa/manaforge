@@ -3,9 +3,9 @@ import Link from "next/link";
 const items = [
   { href: "/", icon: "🏠", label: "Home" },
   { href: "/deck", icon: "📚", label: "Decks" },
-  { href: "/game", icon: "🎮", label: "Partie" },
-  { href: "/commander", icon: "🎲", label: "Random" },
   { href: "/collection", icon: "📦", label: "Collection" },
+  { href: "/community", icon: "👥", label: "Communauté" },
+  { href: "/commander", icon: "🎲", label: "Random" },
 ];
 
 export default function BottomNav() {
