@@ -110,6 +110,11 @@ export default function CollectionPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
   const [setFilter, setSetFilter] = useState("Toutes");
+  const [activeHomeTab, setActiveHomeTab] = useState<"collection" | "fullset">("collection");
+
+  const [fullsetCode, setFullsetCode] = useState("");
+  const [fullsetCards, setFullsetCards] = useState<ScryfallCard[]>([]);
+  const [isLoadingFullset, setIsLoadingFullset] = useState(false);
 
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolder, setNewFolder] = useState("");
@@ -209,11 +214,11 @@ export default function CollectionPage() {
     return ["Toutes", ...Array.from(new Set(values)).sort()];
   }, [cards]);
 
-  const openedFolderSummary = folderSummaries.find((folder) => folder.name === openedFolder);
+  const openedFolderSummary = openedFolder === "__ALL__" ? undefined : folderSummaries.find((folder) => folder.name === openedFolder);
 
   const visibleCards = useMemo(() => {
     return cards.filter((card) => {
-      const matchesFolder = !openedFolder || (card.folder || "Non classé") === openedFolder;
+      const matchesFolder = !openedFolder || openedFolder === "__ALL__" || (card.folder || "Non classé") === openedFolder;
       const matchesSearch = card.name.toLowerCase().includes(search.toLowerCase());
       const matchesSet = setFilter === "Toutes" || card.setName === setFilter;
       return matchesFolder && matchesSearch && matchesSet;
@@ -225,6 +230,29 @@ export default function CollectionPage() {
     const totalValue = visibleCards.reduce((sum, card) => sum + card.quantity * card.price, 0);
     return { totalCards, uniqueCards: visibleCards.length, totalValue: Math.round(totalValue * 100) / 100 };
   }, [visibleCards]);
+
+  const fullsetProgress = useMemo(() => {
+    if (fullsetCards.length === 0) {
+      return { owned: 0, total: 0, percent: 0, missing: [] as ScryfallCard[] };
+    }
+
+    const cleanSetCode = fullsetCode.trim().toLowerCase();
+    const ownedKeys = new Set(
+      cards
+        .filter((card) => card.setCode?.toLowerCase() === cleanSetCode)
+        .map((card) => `${card.setCode?.toLowerCase()}-${card.collectorNumber}`),
+    );
+
+    const missing = fullsetCards.filter((card) => !ownedKeys.has(`${card.set?.toLowerCase()}-${card.collector_number}`));
+    const owned = fullsetCards.length - missing.length;
+
+    return {
+      owned,
+      total: fullsetCards.length,
+      percent: fullsetCards.length > 0 ? Math.round((owned / fullsetCards.length) * 100) : 0,
+      missing,
+    };
+  }, [cards, fullsetCards, fullsetCode]);
 
   function createFolder() {
     const cleanFolder = newFolder.trim();
@@ -316,6 +344,37 @@ export default function CollectionPage() {
     setPrintOptions([]);
     setSelectedPrintId("");
     setShowAddModal(false);
+  }
+
+  async function loadFullset() {
+    const cleanSet = fullsetCode.trim().toLowerCase();
+    if (!cleanSet) {
+      setError("Entre un code d’extension. Exemple : mh3");
+      return;
+    }
+
+    try {
+      setIsLoadingFullset(true);
+      setError("");
+      let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`e:${cleanSet}`)}&unique=prints&order=set`;
+      const allCards: ScryfallCard[] = [];
+
+      while (url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Extension introuvable sur Scryfall.");
+        const data = (await response.json()) as ScryfallSearchResponse;
+        allCards.push(...data.data);
+        url = data.has_more && data.next_page ? data.next_page : "";
+      }
+
+      setFullsetCards(allCards);
+      setActiveHomeTab("fullset");
+    } catch (err) {
+      setFullsetCards([]);
+      setError(err instanceof Error ? err.message : "Erreur pendant le fullset.");
+    } finally {
+      setIsLoadingFullset(false);
+    }
   }
 
   function updateQuantity(id: number, amount: number) {
@@ -432,8 +491,22 @@ export default function CollectionPage() {
           <CollectionHome
             globalStats={globalStats}
             folderSummaries={folderSummaries}
+            activeHomeTab={activeHomeTab}
+            setActiveHomeTab={setActiveHomeTab}
+            fullsetCode={fullsetCode}
+            setFullsetCode={setFullsetCode}
+            fullsetCards={fullsetCards}
+            fullsetProgress={fullsetProgress}
+            isLoadingFullset={isLoadingFullset}
+            fullsetError={error}
+            onLoadFullset={loadFullset}
             viewMode={viewMode}
             setViewMode={setViewMode}
+            onOpenAll={() => {
+              setOpenedFolder("__ALL__");
+              setSearch("");
+              setSetFilter("Toutes");
+            }}
             onOpenFolder={(folder) => {
               setOpenedFolder(folder);
               setSearch("");
@@ -445,7 +518,7 @@ export default function CollectionPage() {
           />
         ) : (
           <FolderView
-            folder={openedFolder}
+            folder={openedFolder === "__ALL__" ? "Toutes les collections" : openedFolder}
             summary={openedFolderSummary}
             cards={visibleCards}
             stats={openedStats}
@@ -458,11 +531,11 @@ export default function CollectionPage() {
             setViewMode={setViewMode}
             onBack={() => setOpenedFolder(null)}
             onScan={() => {
-              setScanFolder(openedFolder);
+              setScanFolder(openedFolder === "__ALL__" ? "Non classé" : openedFolder);
               setShowScanModal(true);
             }}
             onAdd={() => {
-              setSelectedFolder(openedFolder);
+              setSelectedFolder(openedFolder === "__ALL__" ? "Non classé" : openedFolder);
               setShowAddModal(true);
             }}
             onMinus={(id) => updateQuantity(id, -1)}
@@ -473,6 +546,15 @@ export default function CollectionPage() {
       </section>
 
       <div className="fixed bottom-24 right-4 z-40 flex flex-col gap-3">
+        {!openedFolder && (
+          <button
+            onClick={() => setShowFolderModal(true)}
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f59e0b] text-2xl shadow-2xl shadow-orange-500/30 ring-4 ring-white/10 transition active:scale-95"
+            aria-label="Créer un dossier"
+          >
+            📁
+          </button>
+        )}
         <button
           onClick={() => setShowAddModal(true)}
           className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f59e0b] text-2xl shadow-2xl shadow-orange-500/30 ring-4 ring-white/10 transition active:scale-95"
@@ -555,8 +637,18 @@ export default function CollectionPage() {
 function CollectionHome({
   globalStats,
   folderSummaries,
+  activeHomeTab,
+  setActiveHomeTab,
+  fullsetCode,
+  setFullsetCode,
+  fullsetCards,
+  fullsetProgress,
+  isLoadingFullset,
+  fullsetError,
+  onLoadFullset,
   viewMode,
   setViewMode,
+  onOpenAll,
   onOpenFolder,
   onCreateFolder,
   onDeleteFolder,
@@ -564,8 +656,18 @@ function CollectionHome({
 }: {
   globalStats: { totalCards: number; uniqueCards: number; totalValue: number };
   folderSummaries: FolderSummary[];
+  activeHomeTab: "collection" | "fullset";
+  setActiveHomeTab: (tab: "collection" | "fullset") => void;
+  fullsetCode: string;
+  setFullsetCode: (value: string) => void;
+  fullsetCards: ScryfallCard[];
+  fullsetProgress: { owned: number; total: number; percent: number; missing: ScryfallCard[] };
+  isLoadingFullset: boolean;
+  fullsetError: string;
+  onLoadFullset: () => void;
   viewMode: "grid" | "list";
   setViewMode: (mode: "grid" | "list") => void;
+  onOpenAll: () => void;
   onOpenFolder: (folder: string) => void;
   onCreateFolder: () => void;
   onDeleteFolder: (folder: string) => void;
@@ -587,48 +689,127 @@ function CollectionHome({
         </div>
 
         <div className="mt-6 grid grid-cols-2 border-b border-white/10 text-sm font-black">
-          <button className="border-b-2 border-[#f59e0b] pb-3 text-[#f59e0b]">▣ Collection</button>
-          <button className="pb-3 text-white/70">▤ Lists</button>
+          <button
+            onClick={() => setActiveHomeTab("collection")}
+            className={`pb-3 ${activeHomeTab === "collection" ? "border-b-2 border-[#f59e0b] text-[#f59e0b]" : "text-white/70"}`}
+          >
+            ▣ Collection
+          </button>
+          <button
+            onClick={() => setActiveHomeTab("fullset")}
+            className={`pb-3 ${activeHomeTab === "fullset" ? "border-b-2 border-[#f59e0b] text-[#f59e0b]" : "text-white/70"}`}
+          >
+            ◎ Full set
+          </button>
         </div>
       </header>
 
-      <div className="mt-4 grid gap-2">
-        <button className="flex items-center justify-between rounded-xl bg-white/[0.08] px-4 py-3 font-black">
-          <span>🗃️ Toutes les collections</span>
-          <span className="text-white/50">›</span>
-        </button>
-        <button className="flex items-center justify-between rounded-xl bg-white/[0.08] px-4 py-3 font-black">
-          <span>🃏 Decks</span>
-          <span className="text-white/50">›</span>
-        </button>
-      </div>
+      {activeHomeTab === "collection" ? (
+        <>
+          <div className="mt-4 grid gap-2">
+            <button onClick={onOpenAll} className="flex items-center justify-between rounded-xl bg-white/[0.08] px-4 py-3 font-black active:scale-[0.99]">
+              <span>🗃️ Toutes les collections</span>
+              <span className="text-white/50">›</span>
+            </button>
+          </div>
 
-      <div className="mt-5 flex items-center gap-2 rounded-xl bg-black/25 px-3 py-2 text-white/60">
-        <span>⌕</span>
-        <input placeholder="Search binders" className="w-full bg-transparent text-sm outline-none placeholder:text-white/40" />
-      </div>
+          <div className="mt-6 flex items-center justify-between">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Mes dossiers</p>
+            <div className="flex items-center gap-2">
+              <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
+              <button onClick={onCreateFolder} className="rounded-xl bg-[#f59e0b] px-3 py-2 text-xs font-black text-black">＋ Dossier</button>
+            </div>
+          </div>
 
-      <div className="mt-6 flex items-center justify-between">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Mes dossiers</p>
-        <div className="flex items-center gap-2">
-          <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
-          <button onClick={onCreateFolder} className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/30 text-[#f59e0b]">＋</button>
-        </div>
-      </div>
-
-      <div className={viewMode === "grid" ? "mt-3 grid grid-cols-2 gap-3 md:grid-cols-3" : "mt-3 grid gap-3"}>
-        {folderSummaries.map((folder) => (
-          <BinderCard
-            key={folder.name}
-            folder={folder}
-            compact={viewMode === "grid"}
-            onOpen={() => onOpenFolder(folder.name)}
-            onDelete={() => onDeleteFolder(folder.name)}
-            onColorChange={(color) => onColorChange(folder.name, color)}
-          />
-        ))}
-      </div>
+          <div className={viewMode === "grid" ? "mt-3 grid grid-cols-2 gap-3 md:grid-cols-3" : "mt-3 grid gap-3"}>
+            {folderSummaries.map((folder) => (
+              <BinderCard
+                key={folder.name}
+                folder={folder}
+                compact={viewMode === "grid"}
+                onOpen={() => onOpenFolder(folder.name)}
+                onDelete={() => onDeleteFolder(folder.name)}
+                onColorChange={(color) => onColorChange(folder.name, color)}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <FullsetPanel
+          fullsetCode={fullsetCode}
+          setFullsetCode={setFullsetCode}
+          fullsetCards={fullsetCards}
+          progress={fullsetProgress}
+          isLoading={isLoadingFullset}
+          error={fullsetError}
+          onLoad={onLoadFullset}
+        />
+      )}
     </>
+  );
+}
+
+function FullsetPanel({
+  fullsetCode,
+  setFullsetCode,
+  fullsetCards,
+  progress,
+  isLoading,
+  error,
+  onLoad,
+}: {
+  fullsetCode: string;
+  setFullsetCode: (value: string) => void;
+  fullsetCards: ScryfallCard[];
+  progress: { owned: number; total: number; percent: number; missing: ScryfallCard[] };
+  isLoading: boolean;
+  error: string;
+  onLoad: () => void;
+}) {
+  return (
+    <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.055] p-4">
+      <h2 className="text-xl font-black">Suivi Full set</h2>
+      <p className="mt-1 text-sm font-bold text-white/55">Entre un code d’extension : MH3, LTR, FIN, DFT...</p>
+
+      <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
+        <input
+          value={fullsetCode}
+          onChange={(event) => setFullsetCode(event.target.value)}
+          placeholder="mh3"
+          className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-black uppercase outline-none"
+        />
+        <button onClick={onLoad} disabled={isLoading} className="rounded-xl bg-[#f59e0b] px-5 py-3 font-black text-black disabled:opacity-50">
+          {isLoading ? "..." : "Analyser"}
+        </button>
+      </div>
+
+      {error && <p className="mt-3 rounded-xl bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p>}
+
+      {fullsetCards.length > 0 && (
+        <div className="mt-5 rounded-2xl bg-black/25 p-4">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <p className="text-sm font-bold text-white/55">Progression</p>
+              <p className="text-2xl font-black">{progress.owned}/{progress.total}</p>
+            </div>
+            <p className="text-2xl font-black text-[#f59e0b]">{progress.percent}%</p>
+          </div>
+          <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-[#f59e0b]" style={{ width: `${progress.percent}%` }} />
+          </div>
+
+          <h3 className="mt-5 font-black">Cartes manquantes</h3>
+          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
+            {progress.missing.slice(0, 120).map((card) => (
+              <div key={card.id} className="flex items-center justify-between rounded-xl bg-white/[0.06] p-3 text-sm">
+                <span className="truncate font-bold">{card.name}</span>
+                <span className="ml-3 shrink-0 text-white/55">#{card.collector_number}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -667,9 +848,7 @@ function BinderCard({
   onColorChange: (color: string) => void;
 }) {
   const isDefaultFolder = folder.name === "Non classé";
-  const background = folder.cover
-    ? `linear-gradient(90deg, rgba(16,17,22,.96), rgba(16,17,22,.58)), url(${folder.cover})`
-    : `linear-gradient(90deg, ${folder.color}33, rgba(255,255,255,.05))`;
+  const background = `linear-gradient(90deg, ${folder.color}33, rgba(255,255,255,.05))`;
 
   if (compact) {
     return (
@@ -1009,7 +1188,7 @@ function ScanModal({
             <span className="absolute bottom-4 right-4 h-10 w-10 rounded-br-2xl border-b-4 border-r-4 border-white" />
           </button>
           <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); }} />
-          <p className="mt-4 text-center text-sm font-bold text-white/60">{isScanning ? "Analyse OCR en cours..." : scanStatus || "Reconnaissance automatique via OCR + Scryfall"}</p>
+          <p className="mt-4 text-center text-sm font-bold text-white/60">{isScanning ? "Analyse OCR en cours..." : scanStatus || "Prends la photo : ManaForge tente de reconnaître la carte automatiquement"}</p>
           {scanResult && <div className="mt-4 flex w-full items-center gap-3 rounded-2xl bg-white/[0.06] p-3">{getCardArt(scanResult) && <img src={getCardArt(scanResult)} alt={scanResult.name} className="h-16 w-16 rounded-xl object-cover" />}<div className="min-w-0"><p className="truncate font-black">{scanResult.name}</p><p className="text-xs text-white/60">{scanResult.set_name} · #{scanResult.collector_number}</p><p className="text-sm font-black">{formatCurrency(getCardPrice(scanResult), 2)}</p></div></div>}
         </div>
         <div className="mt-4 grid grid-cols-[.7fr_1.3fr] gap-2">
