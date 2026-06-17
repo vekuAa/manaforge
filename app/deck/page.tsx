@@ -236,7 +236,7 @@ export default function DecksPage() {
         setIsSearchingCommander(true);
 
         const response = await fetch(
-          `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(query)}`,
+          `/api/scryfall/autocomplete?q=${encodeURIComponent(query)}`,
         );
 
         if (!response.ok) {
@@ -261,7 +261,7 @@ export default function DecksPage() {
 
   async function getCommanderImage(commanderName: string) {
     const response = await fetch(
-      `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(commanderName)}`,
+      `/api/scryfall/named?name=${encodeURIComponent(commanderName)}`,
     );
 
     if (!response.ok) {
@@ -280,57 +280,16 @@ export default function DecksPage() {
   }
 
   async function enrichDecklist(decklist: DeckCard[]): Promise<DeckCard[]> {
-    const enrichedCards: DeckCard[] = [];
-
-    for (const card of decklist) {
-      try {
-        const response = await fetch(
-          `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(card.name)}`,
-        );
-
-        if (!response.ok) {
-          enrichedCards.push(card);
-          continue;
-        }
-
-        const data = (await response.json()) as ScryfallCardResponse;
-        enrichedCards.push({
-          ...card,
-          typeLine: data.type_line || "",
-          oracleText: data.oracle_text || data.card_faces?.[0]?.oracle_text || "",
-          manaValue: data.cmc || 0,
-          price: Number(data.prices?.eur || data.prices?.usd || 0),
-        });
-      } catch {
-        enrichedCards.push(card);
-      }
-    }
-
-    return enrichedCards;
-  }
-
-  async function saveDeck(deck: Deck) {
-    if (!userId) return deck;
-
-    const { data, error } = await supabase
-      .from("decks")
-      .insert({
-        user_id: userId,
-        name: deck.name,
-        commander: deck.commander,
-        commander_image: deck.commanderImage || null,
-        colors: deck.colors,
-        cards: deck.cards,
-        price: deck.price,
-        wins: deck.wins,
-        losses: deck.losses,
-        decklist: deck.decklist || [],
-      })
-      .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at")
-      .single();
-
-    if (error) throw error;
-    return mapDeckRow(data as DeckRow);
+    // Important : on ne fait plus 100 requêtes Scryfall au moment de l’import.
+    // Avant, 1 carte = 1 fetch /cards/named depuis le navigateur, ce qui provoquait CORS + 429.
+    // On garde la decklist légère et on enrichira les cartes plus tard avec un cache serveur.
+    return decklist.map((card) => ({
+      ...card,
+      typeLine: card.typeLine || "",
+      oracleText: card.oracleText || "",
+      manaValue: card.manaValue ?? 0,
+      price: card.price ?? 0,
+    }));
   }
 
   async function addDeck() {
