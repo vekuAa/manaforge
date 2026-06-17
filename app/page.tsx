@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import BottomNav from "@/components/BottomNav";
 import ProfileButton from "@/components/ProfileButton";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type DeckCard = {
   name: string;
@@ -36,6 +38,7 @@ const dailyCommanders = [
 ];
 
 export default function HomePage() {
+  const router = useRouter();
   const [decks, setDecks] = useState<Deck[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [commanderOfTheDay, setCommanderOfTheDay] = useState(
@@ -43,7 +46,15 @@ export default function HomePage() {
   );
 
   useEffect(() => {
+    const supabase = createClient();
+
+supabase.auth.getUser().then(({ data }) => {
+  if (!data.user) {
+    router.replace("/login");
+  }
+});
     try {
+      
       const savedDecks = localStorage.getItem("manaforge-decks");
       const parsedDecks = savedDecks ? (JSON.parse(savedDecks) as Deck[]) : [];
 
