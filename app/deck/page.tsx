@@ -101,6 +101,35 @@ function mapDeckRow(row: DeckRow): Deck {
   };
 }
 
+async function saveDeckToSupabase(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  deck: Deck
+) {
+  const { data, error } = await supabase
+    .from("decks")
+    .insert({
+      user_id: userId,
+      name: deck.name,
+      commander: deck.commander,
+      commander_image: deck.commanderImage || null,
+      colors: deck.colors || "Incolore",
+      cards: Number(deck.cards || 0),
+      price: Number(deck.price || 0),
+      wins: Number(deck.wins || 0),
+      losses: Number(deck.losses || 0),
+      decklist: deck.decklist || [],
+    })
+    .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return mapDeckRow(data as DeckRow);
+}
+
 function getCategoryNames(categories?: ArchidektCategory[]) {
   return (categories ?? []).map((category) =>
     typeof category === "string" ? category : category.name ?? "",
@@ -318,7 +347,7 @@ export default function DecksPage() {
       setCommanderSuggestions([]);
 
       if (userId) {
-        const savedDeck = deck;
+        const savedDeck = await saveDeckToSupabase(supabase, userId, deck);
         setDecks((current) => current.map((item) => (item.id === optimisticId ? savedDeck : item)));
         setSelectedDeckId(savedDeck.id);
         setSyncStatus("Deck sauvegardé dans Supabase.");
@@ -404,7 +433,7 @@ export default function DecksPage() {
       setArchidektUrl("");
 
       if (userId) {
-        const savedDeck = deck;
+        const savedDeck = await saveDeckToSupabase(supabase, userId, deck);
         setDecks((current) => current.map((item) => (item.id === optimisticId ? savedDeck : item)));
         setSelectedDeckId(savedDeck.id);
         setSyncStatus("Deck Archidekt sauvegardé dans Supabase.");
