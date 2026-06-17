@@ -5,6 +5,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import BottomNav from "@/components/BottomNav";
+import { supabase } from "@/lib/supabase/client";
 
 type CollectionCard = {
   id: number;
@@ -47,6 +48,15 @@ type FolderSummary = {
   totalValue: number;
   color: string;
   cover?: string;
+};
+
+
+type FolderRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string | null;
+  created_at?: string;
 };
 
 type TesseractWorker = {
@@ -127,6 +137,8 @@ export default function CollectionPage() {
   const [cards, setCards] = useState<CollectionCard[]>([]);
   const [folders, setFolders] = useState<string[]>(["Toutes", "Non classé", "Commander", "Trade", "Staples"]);
   const [folderColors, setFolderColors] = useState<Record<string, string>>(DEFAULT_FOLDER_COLORS);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [folderSyncStatus, setFolderSyncStatus] = useState("");
   const [hasLoaded, setHasLoaded] = useState(false);
 
   const [openedFolder, setOpenedFolder] = useState<string | null>(null);
@@ -174,29 +186,105 @@ export default function CollectionPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    try {
-      const savedCards = localStorage.getItem("manaforge-collection");
-      const savedFolders = localStorage.getItem("manaforge-folders");
-      const savedFolderColors = localStorage.getItem("manaforge-folder-colors");
+    let cancelled = false;
 
-      const parsedCards = savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : [];
-      setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé", language: card.language || "fr", foil: Boolean(card.foil) })));
-      if (savedFolders) setFolders(JSON.parse(savedFolders) as string[]);
-      if (savedFolderColors) {
-        setFolderColors({ ...DEFAULT_FOLDER_COLORS, ...(JSON.parse(savedFolderColors) as Record<string, string>) });
+    async function loadInitialData() {
+      try {
+        const savedCards = localStorage.getItem("manaforge-collection");
+        const savedFolders = localStorage.getItem("manaforge-folders");
+        const savedFolderColors = localStorage.getItem("manaforge-folder-colors");
+
+        const parsedCards = savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : [];
+        const localFolders = savedFolders ? (JSON.parse(savedFolders) as string[]) : ["Toutes", "Non classé", "Commander", "Trade", "Staples"];
+        const localColors = savedFolderColors ? (JSON.parse(savedFolderColors) as Record<string, string>) : DEFAULT_FOLDER_COLORS;
+
+        if (!cancelled) {
+          setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé", language: card.language || "fr", foil: Boolean(card.foil) })));
+        }
+
+        const { data: authData } = await supabase.auth.getUser();
+        const currentUser = authData.user;
+
+        if (!currentUser) {
+          if (!cancelled) {
+            setFolders(localFolders);
+            setFolderColors({ ...DEFAULT_FOLDER_COLORS, ...localColors });
+            setFolderSyncStatus("Connecte-toi pour synchroniser tes dossiers.");
+          }
+          return;
+        }
+
+        if (!cancelled) setUserId(currentUser.id);
+
+        const localFolderNames = Array.from(new Set(localFolders.filter((folder) => folder !== "Toutes")));
+        const foldersToEnsure = localFolderNames.length > 0 ? localFolderNames : ["Non classé", "Commander", "Trade", "Staples"];
+
+        const { data: remoteFolders, error: remoteError } = await supabase
+          .from("folders")
+          .select("id,user_id,name,color,created_at")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: true });
+
+        if (remoteError) throw remoteError;
+
+        const existingNames = new Set((remoteFolders || []).map((folder) => folder.name));
+        const missingFolders = foldersToEnsure
+          .filter((folder) => !existingNames.has(folder))
+          .map((folder) => ({
+            user_id: currentUser.id,
+            name: folder,
+            color: localColors[folder] || DEFAULT_FOLDER_COLORS[folder] || getFallbackFolderColor(folder),
+          }));
+
+        if (missingFolders.length > 0) {
+          const { error: insertError } = await supabase.from("folders").insert(missingFolders);
+          if (insertError) throw insertError;
+        }
+
+        const { data: syncedFolders, error: syncedError } = await supabase
+          .from("folders")
+          .select("id,user_id,name,color,created_at")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: true });
+
+        if (syncedError) throw syncedError;
+
+        const rows = (syncedFolders || []) as FolderRow[];
+        const nextFolders = ["Toutes", ...rows.map((folder) => folder.name)];
+        const nextColors = rows.reduce<Record<string, string>>((acc, folder) => {
+          acc[folder.name] = folder.color || getFallbackFolderColor(folder.name);
+          return acc;
+        }, { ...DEFAULT_FOLDER_COLORS });
+
+        if (!cancelled) {
+          setFolders(nextFolders.includes("Non classé") ? nextFolders : ["Toutes", "Non classé", ...nextFolders.filter((folder) => folder !== "Toutes")]);
+          setFolderColors(nextColors);
+          setFolderSyncStatus("Dossiers synchronisés avec ton compte.");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Erreur de synchronisation des dossiers.");
+          setFolderSyncStatus("Synchronisation des dossiers impossible pour le moment.");
+        }
+      } finally {
+        if (!cancelled) setHasLoaded(true);
       }
-    } catch {
-      setCards([]);
-    } finally {
-      setHasLoaded(true);
     }
+
+    void loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (!hasLoaded) return;
     localStorage.setItem("manaforge-collection", JSON.stringify(cards));
-    localStorage.setItem("manaforge-folders", JSON.stringify(folders));
-    localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
+    if (!userId) {
+      localStorage.setItem("manaforge-folders", JSON.stringify(folders));
+      localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
+    }
   }, [cards, folders, folderColors, hasLoaded]);
 
   useEffect(() => {
@@ -287,22 +375,45 @@ export default function CollectionPage() {
     };
   }, [cards, fullsetCards, fullsetCode]);
 
-  function createFolder() {
+  async function createFolder() {
     const cleanFolder = newFolder.trim();
     if (!cleanFolder || folders.includes(cleanFolder)) {
       setNewFolder("");
       return;
     }
+
+    const previousFolders = folders;
+    const previousColors = folderColors;
+
     setFolders((current) => [...current, cleanFolder]);
     setFolderColors((current) => ({ ...current, [cleanFolder]: newFolderColor }));
     setSelectedFolder(cleanFolder);
     setScanFolder(cleanFolder);
+
+    if (userId) {
+      const { error: insertError } = await supabase.from("folders").insert({ user_id: userId, name: cleanFolder, color: newFolderColor });
+      if (insertError) {
+        setFolders(previousFolders);
+        setFolderColors(previousColors);
+        setError(insertError.message);
+        return;
+      }
+      setFolderSyncStatus("Dossier sauvegardé dans Supabase.");
+    }
+
     setNewFolder("");
     setNewFolderColor(FOLDER_COLOR_PALETTE[0]);
   }
 
-  function deleteFolder(folder: string) {
+  async function deleteFolder(folder: string) {
     if (["Toutes", "Non classé"].includes(folder)) return;
+    const confirmed = window.confirm(`Supprimer le dossier "${folder}" ? Les cartes seront déplacées dans Non classé.`);
+    if (!confirmed) return;
+
+    const previousCards = cards;
+    const previousFolders = folders;
+    const previousColors = folderColors;
+
     setCards((current) => current.map((card) => (card.folder === folder ? { ...card, folder: "Non classé" } : card)));
     setFolders((current) => current.filter((item) => item !== folder));
     setFolderColors((current) => {
@@ -311,6 +422,33 @@ export default function CollectionPage() {
       return next;
     });
     if (openedFolder === folder) setOpenedFolder(null);
+
+    if (userId) {
+      const { error: deleteError } = await supabase.from("folders").delete().eq("user_id", userId).eq("name", folder);
+      if (deleteError) {
+        setCards(previousCards);
+        setFolders(previousFolders);
+        setFolderColors(previousColors);
+        setError(deleteError.message);
+        return;
+      }
+      setFolderSyncStatus("Dossier supprimé de Supabase.");
+    }
+  }
+
+  async function updateFolderColor(folder: string, color: string) {
+    const previousColors = folderColors;
+    setFolderColors((current) => ({ ...current, [folder]: color }));
+
+    if (!userId || folder === "Toutes") return;
+
+    const { error: updateError } = await supabase.from("folders").update({ color }).eq("user_id", userId).eq("name", folder);
+    if (updateError) {
+      setFolderColors(previousColors);
+      setError(updateError.message);
+      return;
+    }
+    setFolderSyncStatus("Couleur du dossier sauvegardée.");
   }
 
   function addCardToCollection(card: ScryfallCard, folder: string, amount: number, language = card.lang || "fr", foil = false) {
@@ -606,7 +744,8 @@ export default function CollectionPage() {
             }}
             onCreateFolder={() => setShowFolderModal(true)}
             onDeleteFolder={deleteFolder}
-            onColorChange={(folder, color) => setFolderColors((current) => ({ ...current, [folder]: color }))}
+            onColorChange={(folder, color) => void updateFolderColor(folder, color)}
+            folderSyncStatus={folderSyncStatus}
           />
         ) : (
           <FolderView
@@ -778,6 +917,7 @@ function CollectionHome({
   onCreateFolder,
   onDeleteFolder,
   onColorChange,
+  folderSyncStatus,
 }: {
   globalStats: { totalCards: number; uniqueCards: number; totalValue: number };
   folderSummaries: FolderSummary[];
@@ -801,6 +941,7 @@ function CollectionHome({
   onCreateFolder: () => void;
   onDeleteFolder: (folder: string) => void;
   onColorChange: (folder: string, color: string) => void;
+  folderSyncStatus: string;
 }) {
   return (
     <>
@@ -832,6 +973,12 @@ function CollectionHome({
           </button>
         </div>
       </header>
+
+      {folderSyncStatus && (
+        <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-center text-xs font-bold text-white/55">
+          {folderSyncStatus}
+        </p>
+      )}
 
       {activeHomeTab === "collection" ? (
         <>
@@ -1027,6 +1174,7 @@ function BinderCard({
   onOpen,
   onDelete,
   onColorChange,
+  folderSyncStatus,
 }: {
   folder: FolderSummary;
   compact: boolean;
