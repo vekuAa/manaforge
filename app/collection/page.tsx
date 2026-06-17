@@ -43,6 +43,34 @@ type ScryfallAutocompleteResponse = {
   data?: string[];
 };
 
+const FOLDER_COLOR_PALETTE = [
+  "#facc15",
+  "#60a5fa",
+  "#a78bfa",
+  "#fb7185",
+  "#34d399",
+  "#f97316",
+  "#22d3ee",
+  "#f472b6",
+];
+
+const DEFAULT_FOLDER_COLORS: Record<string, string> = {
+  "Non classé": "#facc15",
+  Commander: "#60a5fa",
+  Trade: "#a78bfa",
+  Staples: "#34d399",
+};
+
+function getFallbackFolderColor(folder: string) {
+  let hash = 0;
+
+  for (let index = 0; index < folder.length; index += 1) {
+    hash = folder.charCodeAt(index) + ((hash << 5) - hash);
+  }
+
+  return FOLDER_COLOR_PALETTE[Math.abs(hash) % FOLDER_COLOR_PALETTE.length];
+}
+
 export default function CollectionPage() {
   const [cards, setCards] = useState<CollectionCard[]>([]);
   const [folders, setFolders] = useState<string[]>([
@@ -59,6 +87,7 @@ export default function CollectionPage() {
   const [quantity, setQuantity] = useState(1);
   const [selectedFolder, setSelectedFolder] = useState("Non classé");
   const [newFolder, setNewFolder] = useState("");
+  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLOR_PALETTE[0]);
 
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [printOptions, setPrintOptions] = useState<ScryfallCard[]>([]);
@@ -69,6 +98,7 @@ export default function CollectionPage() {
   const [setFilter, setSetFilter] = useState("Toutes");
   const [openedFolder, setOpenedFolder] = useState<string | null>(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
+  const [folderColors, setFolderColors] = useState<Record<string, string>>(DEFAULT_FOLDER_COLORS);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   const [fullsetCode, setFullsetCode] = useState("");
@@ -83,11 +113,19 @@ export default function CollectionPage() {
     try {
       const savedCards = localStorage.getItem("manaforge-collection");
       const savedFolders = localStorage.getItem("manaforge-folders");
+      const savedFolderColors = localStorage.getItem("manaforge-folder-colors");
 
       setCards(savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : []);
 
       if (savedFolders) {
         setFolders(JSON.parse(savedFolders) as string[]);
+      }
+
+      if (savedFolderColors) {
+        setFolderColors({
+          ...DEFAULT_FOLDER_COLORS,
+          ...(JSON.parse(savedFolderColors) as Record<string, string>),
+        });
       }
     } catch {
       setCards([]);
@@ -101,7 +139,8 @@ export default function CollectionPage() {
 
     localStorage.setItem("manaforge-collection", JSON.stringify(cards));
     localStorage.setItem("manaforge-folders", JSON.stringify(folders));
-  }, [cards, folders, hasLoaded]);
+    localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
+  }, [cards, folders, folderColors, hasLoaded]);
 
   useEffect(() => {
     const query = cardName.trim();
@@ -213,9 +252,10 @@ export default function CollectionPage() {
           totalQuantity,
           totalValue: Math.round(totalValue * 100) / 100,
           previewImages,
+          color: folderColors[folder] || getFallbackFolderColor(folder),
         };
       });
-  }, [cards, folders]);
+  }, [cards, folders, folderColors]);
 
   const fullsetProgress = useMemo(() => {
     if (fullsetCards.length === 0) {
@@ -281,8 +321,13 @@ export default function CollectionPage() {
     }
 
     setFolders((current) => [...current, cleanFolder]);
+    setFolderColors((current) => ({
+      ...current,
+      [cleanFolder]: newFolderColor,
+    }));
     setSelectedFolder(cleanFolder);
     setNewFolder("");
+    setNewFolderColor(FOLDER_COLOR_PALETTE[0]);
   }
 
   function deleteFolder(folder: string) {
@@ -295,6 +340,11 @@ export default function CollectionPage() {
     );
 
     setFolders((current) => current.filter((item) => item !== folder));
+    setFolderColors((current) => {
+      const next = { ...current };
+      delete next[folder];
+      return next;
+    });
 
     if (openedFolder === folder) setOpenedFolder(null);
     if (folderFilter === folder) setFolderFilter("Toutes");
@@ -505,6 +555,7 @@ export default function CollectionPage() {
                 value={globalStats.totalValue}
                 label="Valeur totale"
                 caption={`${globalStats.totalCards} cartes`}
+                segments={folderSummaries}
               />
             </div>
           </div>
@@ -546,6 +597,12 @@ export default function CollectionPage() {
                   folder={folder}
                   viewMode={viewMode}
                   formatCurrency={formatCurrency}
+                  onColorChange={(color) =>
+                    setFolderColors((current) => ({
+                      ...current,
+                      [folder.name]: color,
+                    }))
+                  }
                   onOpen={() => {
                     setOpenedFolder(folder.name);
                     setFolderFilter(folder.name);
@@ -593,7 +650,7 @@ export default function CollectionPage() {
             onClick={() => setViewMode("grid")}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               viewMode === "grid"
-                ? "bg-accent text-black shadow-lg"
+                ? "border border-accent/50 bg-accent/20 text-white shadow-lg"
                 : "text-muted hover:bg-white/10 hover:text-white"
             }`}
           >
@@ -604,7 +661,7 @@ export default function CollectionPage() {
             onClick={() => setViewMode("list")}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               viewMode === "list"
-                ? "bg-accent text-black shadow-lg"
+                ? "border border-accent/50 bg-accent/20 text-white shadow-lg"
                 : "text-muted hover:bg-white/10 hover:text-white"
             }`}
           >
@@ -898,6 +955,28 @@ export default function CollectionPage() {
               autoFocus
             />
 
+            <div className="mt-5">
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-muted">
+                Couleur du dossier
+              </p>
+              <div className="mt-3 grid grid-cols-8 gap-2">
+                {FOLDER_COLOR_PALETTE.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setNewFolderColor(color)}
+                    className={`h-8 rounded-full border-2 transition ${
+                      newFolderColor === color
+                        ? "scale-110 border-white"
+                        : "border-white/10"
+                    }`}
+                    style={{ backgroundColor: color }}
+                    aria-label={`Choisir la couleur ${color}`}
+                  />
+                ))}
+              </div>
+            </div>
+
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button
                 onClick={() => {
@@ -932,10 +1011,16 @@ function CircularValue({
   value,
   label,
   caption,
+  segments,
 }: {
   value: number;
   label: string;
   caption: string;
+  segments: {
+    name: string;
+    totalValue: number;
+    color: string;
+  }[];
 }) {
   const displayValue = new Intl.NumberFormat("fr-FR", {
     style: "currency",
@@ -943,32 +1028,72 @@ function CircularValue({
     maximumFractionDigits: 0,
   }).format(value);
 
+  const positiveSegments = segments.filter((segment) => segment.totalValue > 0);
+
+  const conicParts = positiveSegments.map((segment, index) => {
+    const start = positiveSegments
+      .slice(0, index)
+      .reduce(
+        (sum, currentSegment) =>
+          sum + (value > 0 ? (currentSegment.totalValue / value) * 360 : 0),
+        0,
+      );
+    const end = start + (value > 0 ? (segment.totalValue / value) * 360 : 0);
+
+    return `${segment.color} ${start}deg ${end}deg`;
+  });
+
+  const conicGradient =
+    conicParts.length > 0
+      ? `conic-gradient(${conicParts.join(", ")})`
+      : "conic-gradient(#facc15 0 360deg)";
+
+  const topSegments = positiveSegments
+    .sort((a, b) => b.totalValue - a.totalValue)
+    .slice(0, 3);
+
   return (
     <div className="relative shrink-0">
       <div className="absolute inset-0 rounded-full bg-accent/20 blur-2xl" />
       <div
-        className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full border border-accent/40 bg-black/50 p-3 text-center shadow-2xl"
+        className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full border border-white/15 bg-black/50 p-3 text-center shadow-2xl"
         style={{
-          background:
-            "radial-gradient(circle at center, rgba(9,9,13,0.96) 0 58%, transparent 59%), conic-gradient(var(--accent, #facc15) 0 360deg)",
+          background: `radial-gradient(circle at center, rgba(9,9,13,0.96) 0 58%, transparent 59%), ${conicGradient}`,
         }}
       >
         <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted">
           {label}
         </p>
-        <p className="mt-1 max-w-[96px] truncate text-xl font-black text-accent">
+        <p className="mt-1 max-w-[96px] truncate text-xl font-black text-white">
           {displayValue}
         </p>
         <p className="mt-1 text-[10px] font-bold text-muted">{caption}</p>
       </div>
+
+      {topSegments.length > 0 && (
+        <div className="mt-3 space-y-1 rounded-2xl border border-white/10 bg-black/25 p-2">
+          {topSegments.map((segment) => (
+            <div key={segment.name} className="flex items-center gap-2 text-[10px] font-bold text-muted">
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: segment.color }}
+              />
+              <span className="max-w-[72px] truncate">{segment.name}</span>
+              <span className="ml-auto text-white">
+                {Math.round((segment.totalValue / value) * 100)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
-
 function FolderCard({
   folder,
   viewMode,
   formatCurrency,
+  onColorChange,
   onOpen,
   onDelete,
 }: {
@@ -978,9 +1103,11 @@ function FolderCard({
     totalQuantity: number;
     totalValue: number;
     previewImages: string[];
+    color: string;
   };
   viewMode: "grid" | "list";
   formatCurrency: (value: number) => string;
+  onColorChange: (color: string) => void;
   onOpen: () => void;
   onDelete: () => void;
 }) {
@@ -993,7 +1120,10 @@ function FolderCard({
           onClick={onOpen}
           className="flex w-full items-center gap-4 text-left"
         >
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-400 text-3xl shadow-lg shadow-yellow-500/10">
+          <div
+            className="flex h-14 w-14 items-center justify-center rounded-2xl text-3xl shadow-lg"
+            style={{ backgroundColor: folder.color }}
+          >
             📁
           </div>
 
@@ -1004,9 +1134,27 @@ function FolderCard({
             </p>
           </div>
 
-          <p className="shrink-0 text-lg font-black text-accent">
-            {formatCurrency(folder.totalValue)}
-          </p>
+          <div className="shrink-0 text-right">
+            <p className="text-lg font-black text-accent">
+              {formatCurrency(folder.totalValue)}
+            </p>
+            <div className="mt-2 flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+              {FOLDER_COLOR_PALETTE.slice(0, 5).map((color) => (
+                <span
+                  key={color}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onColorChange(color)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") onColorChange(color);
+                  }}
+                  className="h-3 w-3 rounded-full border border-white/20"
+                  style={{ backgroundColor: color }}
+                  aria-label={`Couleur ${color}`}
+                />
+              ))}
+            </div>
+          </div>
         </button>
 
         {!isDefaultFolder && (
@@ -1024,11 +1172,13 @@ function FolderCard({
 
   return (
     <div className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] via-white/[0.04] to-black/40 p-4 shadow-xl transition hover:-translate-y-0.5 hover:border-yellow-300/40 hover:shadow-2xl">
-      <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-yellow-400/10 blur-2xl" />
+      <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full blur-2xl"
+        style={{ backgroundColor: `${folder.color}22` }} />
 
       <button onClick={onOpen} className="relative z-10 w-full text-left">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-yellow-400 text-4xl shadow-lg shadow-yellow-500/10 ring-4 ring-yellow-400/10">
+          <div className="flex h-16 w-16 items-center justify-center rounded-3xl text-4xl shadow-lg ring-4 ring-white/10"
+            style={{ backgroundColor: folder.color }}>
             📁
           </div>
 
@@ -1040,6 +1190,21 @@ function FolderCard({
               {formatCurrency(folder.totalValue)}
             </p>
           </div>
+        </div>
+
+        <div className="mt-4 flex gap-2" onClick={(event) => event.stopPropagation()}>
+          {FOLDER_COLOR_PALETTE.slice(0, 6).map((color) => (
+            <button
+              key={color}
+              type="button"
+              onClick={() => onColorChange(color)}
+              className={`h-5 w-5 rounded-full border transition ${
+                folder.color === color ? "scale-110 border-white" : "border-white/10"
+              }`}
+              style={{ backgroundColor: color }}
+              aria-label={`Couleur ${color}`}
+            />
+          ))}
         </div>
 
         <p className="mt-5 line-clamp-1 text-xl font-black">{folder.name}</p>
