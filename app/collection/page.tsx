@@ -424,7 +424,7 @@ export default function CollectionPage() {
     return { setCode: setCode?.toLowerCase(), collectorNumber: numberMatch?.[1] };
   }
 
-  async function prepareImageForOcr(file: File, mode: "full" | "title" | "bottom" = "full") {
+  async function prepareImageForOcr(file: File | Blob, mode: "full" | "title" | "bottom" = "full") {
     const bitmap = await createImageBitmap(file);
     const sourceY = mode === "title" ? 0 : mode === "bottom" ? Math.floor(bitmap.height * 0.62) : 0;
     const sourceHeight = mode === "title" ? Math.floor(bitmap.height * 0.28) : mode === "bottom" ? Math.floor(bitmap.height * 0.38) : bitmap.height;
@@ -474,7 +474,7 @@ export default function CollectionPage() {
     throw new Error("Carte non reconnue. Reprends la photo plus près, bien droite et avec le nom de la carte visible.");
   }
 
-  async function scanImage(file: File) {
+  async function scanImage(file: File | Blob) {
     try {
       setIsScanning(true);
       setScanResult(null);
@@ -590,7 +590,7 @@ export default function CollectionPage() {
         {!openedFolder && (
           <button
             onClick={() => setShowFolderModal(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-[#f59e0b] text-lg shadow-xl shadow-orange-500/20 ring-2 ring-white/10 transition active:scale-95"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f59e0b]/45 text-base shadow-xl shadow-orange-500/10 ring-1 ring-white/10 backdrop-blur-md transition active:scale-95"
             aria-label="Créer un dossier"
           >
             📁
@@ -599,7 +599,7 @@ export default function CollectionPage() {
         {!openedFolder && (
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.12] text-lg shadow-xl ring-1 ring-white/10 backdrop-blur transition active:scale-95"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.08] text-base shadow-xl ring-1 ring-white/10 backdrop-blur-md transition active:scale-95"
             aria-label="Ajouter une carte"
           >
             🎴
@@ -610,7 +610,7 @@ export default function CollectionPage() {
             setScanFolder(openedFolder && openedFolder !== "__ALL__" ? openedFolder : "Non classé");
             setShowScanModal(true);
           }}
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/45 text-lg shadow-xl backdrop-blur transition active:scale-95"
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-black/25 text-base shadow-xl backdrop-blur-md transition active:scale-95"
           aria-label="Scanner une carte"
         >
           ⛶
@@ -1214,33 +1214,110 @@ function ScanModal({
   scanResult: ScryfallCard | null;
   isScanning: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
-  onFile: (file: File) => void;
+  onFile: (file: File | Blob) => void;
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function startCamera() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setCameraError("Caméra indisponible sur ce navigateur. Utilise Chrome/Safari mobile en HTTPS.");
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 1920 },
+          },
+          audio: false,
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } catch {
+        setCameraError("Autorise la caméra pour lancer le scanner automatique.");
+      }
+    }
+
+    void startCamera();
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isScanning || scanResult) return undefined;
+
+    const interval = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob && !isScanning && !scanResult) onFile(blob);
+      }, "image/jpeg", 0.92);
+    }, 2400);
+
+    return () => window.clearInterval(interval);
+  }, [isScanning, onFile, scanResult]);
+
   return (
     <div className="fixed inset-0 z-[100] bg-[#101116] text-white">
       <div className="mx-auto flex h-full max-w-md flex-col px-4 pb-4 pt-3">
         <div className="flex items-center justify-between">
           <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-xl">✕</button>
           <h2 className="font-black">Scanner une carte</h2>
-          <span className="w-10" />
+          <button onClick={() => fileInputRef.current?.click()} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-lg">📷</button>
         </div>
 
         <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-black/25 p-4">
-          <div className="relative mx-auto flex aspect-[63/88] w-full max-w-[280px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-black/40">
+          <div className="relative mx-auto flex aspect-[63/88] w-full max-w-[295px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-black/60">
             {scanPreview ? (
-              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain" />
+              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain opacity-80" />
             ) : (
-              <div className="px-8 text-center">
-                <p className="text-lg font-black">Cadre la carte</p>
-                <p className="mt-2 text-sm font-bold text-white/55">Nom visible en haut, carte droite, lumière propre.</p>
+              <video ref={videoRef} className="h-full w-full object-cover" muted playsInline autoPlay />
+            )}
+
+            {!scanPreview && cameraError && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 px-6 text-center">
+                <p className="font-black">Caméra bloquée</p>
+                <p className="mt-2 text-sm text-white/60">{cameraError}</p>
+                <button onClick={() => fileInputRef.current?.click()} className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-black text-black">Choisir une photo</button>
               </div>
             )}
-            <span className="absolute left-4 top-4 h-10 w-10 rounded-tl-2xl border-l-4 border-t-4 border-white" />
-            <span className="absolute right-4 top-4 h-10 w-10 rounded-tr-2xl border-r-4 border-t-4 border-white" />
-            <span className="absolute bottom-4 left-4 h-10 w-10 rounded-bl-2xl border-b-4 border-l-4 border-white" />
-            <span className="absolute bottom-4 right-4 h-10 w-10 rounded-br-2xl border-b-4 border-r-4 border-white" />
+
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_55%,rgba(0,0,0,.38))]" />
+            <span className="absolute left-5 top-5 h-11 w-11 rounded-tl-2xl border-l-4 border-t-4 border-white" />
+            <span className="absolute right-5 top-5 h-11 w-11 rounded-tr-2xl border-r-4 border-t-4 border-white" />
+            <span className="absolute bottom-5 left-5 h-11 w-11 rounded-bl-2xl border-b-4 border-l-4 border-white" />
+            <span className="absolute bottom-5 right-5 h-11 w-11 rounded-br-2xl border-b-4 border-r-4 border-white" />
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-xs font-black text-white/80 backdrop-blur">Scan automatique</div>
           </div>
 
           <input
@@ -1256,16 +1333,8 @@ function ScanModal({
             }}
           />
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isScanning}
-            className="mx-auto mt-4 w-full max-w-[280px] rounded-2xl bg-white py-3 text-base font-black text-black disabled:opacity-50"
-          >
-            {scanPreview ? "Reprendre une photo" : "Prendre la photo"}
-          </button>
-
-          <p className="mt-3 min-h-10 text-center text-sm font-bold text-white/60">
-            {isScanning ? "Reconnaissance en cours..." : scanStatus || "Après la photo, ManaForge cherche automatiquement la carte."}
+          <p className="mt-4 min-h-10 text-center text-sm font-bold text-white/60">
+            {isScanning ? "Analyse automatique en cours..." : scanStatus || "Place la carte dans le cadre. ManaForge lance la reconnaissance tout seul."}
           </p>
 
           {scanResult && (
