@@ -34,12 +34,13 @@ export default function RegisterPage() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          display_name: displayName,
-          username: slugify(displayName || email.split("@")[0]),
-        },
-      },
+options: {
+  emailRedirectTo: `${window.location.origin}/auth/callback`,
+  data: {
+    display_name: displayName,
+    username: slugify(displayName || email.split("@")[0]),
+  },
+},
     });
 
     if (signUpError) {
