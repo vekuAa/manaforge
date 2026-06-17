@@ -5,8 +5,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import BottomNav from "@/components/BottomNav";
-import { supabase } from "@/lib/supabase/client";
-
+import { createClient } from "@/lib/supabase/client";
 type CollectionCard = {
   id: number;
   name: string;
@@ -184,6 +183,7 @@ export default function CollectionPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -276,7 +276,7 @@ export default function CollectionPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     if (!hasLoaded) return;
@@ -285,7 +285,7 @@ export default function CollectionPage() {
       localStorage.setItem("manaforge-folders", JSON.stringify(folders));
       localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
     }
-  }, [cards, folders, folderColors, hasLoaded]);
+  }, [cards, folders, folderColors, hasLoaded, userId]);
 
   useEffect(() => {
     const query = cardName.trim();
@@ -1174,7 +1174,6 @@ function BinderCard({
   onOpen,
   onDelete,
   onColorChange,
-  folderSyncStatus,
 }: {
   folder: FolderSummary;
   compact: boolean;
