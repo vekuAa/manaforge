@@ -18,6 +18,8 @@ type CollectionCard = {
   collectorNumber?: string;
   rarity?: string;
   folder?: string;
+  language?: string;
+  foil?: boolean;
 };
 
 type ScryfallCard = {
@@ -30,7 +32,10 @@ type ScryfallCard = {
   rarity?: string;
   image_uris?: { normal?: string; art_crop?: string };
   card_faces?: { image_uris?: { normal?: string; art_crop?: string } }[];
-  prices?: { eur?: string | null; usd?: string | null };
+  lang?: string;
+  foil?: boolean;
+  nonfoil?: boolean;
+  prices?: { eur?: string | null; eur_foil?: string | null; usd?: string | null; usd_foil?: string | null };
 };
 
 type ScryfallSearchResponse = { data: ScryfallCard[]; has_more?: boolean; next_page?: string };
@@ -64,6 +69,23 @@ const FOLDER_COLOR_PALETTE = [
   "#94a3b8",
 ];
 
+const CARD_LANGUAGE_OPTIONS = [
+  { value: "fr", label: "Français" },
+  { value: "en", label: "Anglais" },
+  { value: "de", label: "Allemand" },
+  { value: "es", label: "Espagnol" },
+  { value: "it", label: "Italien" },
+  { value: "pt", label: "Portugais" },
+  { value: "ja", label: "Japonais" },
+  { value: "ko", label: "Coréen" },
+  { value: "zhs", label: "Chinois simplifié" },
+  { value: "zht", label: "Chinois traditionnel" },
+];
+
+function getLanguageLabel(language?: string) {
+  return CARD_LANGUAGE_OPTIONS.find((item) => item.value === language)?.label || (language || "Langue inconnue").toUpperCase();
+}
+
 const DEFAULT_FOLDER_COLORS: Record<string, string> = {
   "Non classé": "#22d3ee",
   Commander: "#f97316",
@@ -96,8 +118,9 @@ function getCardArt(card: ScryfallCard) {
   return card.image_uris?.art_crop || card.card_faces?.[0]?.image_uris?.art_crop || getCardImage(card);
 }
 
-function getCardPrice(card: ScryfallCard) {
-  return Number(card.prices?.eur || card.prices?.usd || 0);
+function getCardPrice(card: ScryfallCard, foil = false) {
+  if (foil) return Number(card.prices?.eur_foil || card.prices?.usd_foil || card.prices?.eur || card.prices?.usd || 0);
+  return Number(card.prices?.eur || card.prices?.usd || card.prices?.eur_foil || card.prices?.usd_foil || 0);
 }
 
 export default function CollectionPage() {
@@ -115,6 +138,8 @@ export default function CollectionPage() {
   const [pendingFullsetCard, setPendingFullsetCard] = useState<ScryfallCard | null>(null);
   const [pendingFullsetFolder, setPendingFullsetFolder] = useState("Non classé");
   const [pendingFullsetQuantity, setPendingFullsetQuantity] = useState(1);
+  const [pendingFullsetLanguage, setPendingFullsetLanguage] = useState("fr");
+  const [pendingFullsetFoil, setPendingFullsetFoil] = useState(false);
 
   const [fullsetCode, setFullsetCode] = useState("");
   const [fullsetCards, setFullsetCards] = useState<ScryfallCard[]>([]);
@@ -128,6 +153,8 @@ export default function CollectionPage() {
   const [cardName, setCardName] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [selectedFolder, setSelectedFolder] = useState("Non classé");
+  const [selectedLanguage, setSelectedLanguage] = useState("fr");
+  const [selectedFoil, setSelectedFoil] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [printOptions, setPrintOptions] = useState<ScryfallCard[]>([]);
   const [selectedPrintId, setSelectedPrintId] = useState("");
@@ -137,6 +164,8 @@ export default function CollectionPage() {
   const [showScanModal, setShowScanModal] = useState(false);
   const [scanFolder, setScanFolder] = useState("Non classé");
   const [scanQuantity, setScanQuantity] = useState(1);
+  const [scanLanguage, setScanLanguage] = useState("fr");
+  const [scanFoil, setScanFoil] = useState(false);
   const [scanPreview, setScanPreview] = useState("");
   const [scanStatus, setScanStatus] = useState("");
   const [scanResult, setScanResult] = useState<ScryfallCard | null>(null);
@@ -151,7 +180,7 @@ export default function CollectionPage() {
       const savedFolderColors = localStorage.getItem("manaforge-folder-colors");
 
       const parsedCards = savedCards ? (JSON.parse(savedCards) as CollectionCard[]) : [];
-      setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé" })));
+      setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé", language: card.language || "fr", foil: Boolean(card.foil) })));
       if (savedFolders) setFolders(JSON.parse(savedFolders) as string[]);
       if (savedFolderColors) {
         setFolderColors({ ...DEFAULT_FOLDER_COLORS, ...(JSON.parse(savedFolderColors) as Record<string, string>) });
@@ -284,14 +313,17 @@ export default function CollectionPage() {
     if (openedFolder === folder) setOpenedFolder(null);
   }
 
-  function addCardToCollection(card: ScryfallCard, folder: string, amount: number) {
+  function addCardToCollection(card: ScryfallCard, folder: string, amount: number, language = card.lang || "fr", foil = false) {
     const cleanFolder = folder === "Toutes" ? "Non classé" : folder;
+    const cleanLanguage = language || card.lang || "fr";
     setCards((current) => {
       const existing = current.find(
         (item) =>
           item.setCode?.toLowerCase() === card.set?.toLowerCase() &&
           item.collectorNumber === card.collector_number &&
-          (item.folder || "Non classé") === cleanFolder,
+          (item.folder || "Non classé") === cleanFolder &&
+          (item.language || "fr") === cleanLanguage &&
+          Boolean(item.foil) === foil,
       );
       if (existing) {
         return current.map((item) => (item.id === existing.id ? { ...item, quantity: item.quantity + amount } : item));
@@ -303,13 +335,15 @@ export default function CollectionPage() {
           name: card.name,
           image: getCardImage(card),
           quantity: amount,
-          price: getCardPrice(card),
+          price: getCardPrice(card, foil),
           typeLine: card.type_line || "",
           setName: card.set_name || "Extension inconnue",
           setCode: card.set || "",
           collectorNumber: card.collector_number || "",
           rarity: card.rarity || "unknown",
           folder: cleanFolder,
+          language: cleanLanguage,
+          foil,
         },
       ];
     });
@@ -340,10 +374,12 @@ export default function CollectionPage() {
     const selectedPrint = printOptions.find((card) => card.id === selectedPrintId);
     if (!selectedPrint) return setError("Choisis une impression de carte.");
     setIsAdding(true);
-    addCardToCollection(selectedPrint, selectedFolder, quantity);
+    addCardToCollection(selectedPrint, selectedFolder, quantity, selectedLanguage, selectedFoil);
     setIsAdding(false);
     setCardName("");
     setQuantity(1);
+    setSelectedLanguage("fr");
+    setSelectedFoil(false);
     setSuggestions([]);
     setPrintOptions([]);
     setSelectedPrintId("");
@@ -501,23 +537,27 @@ export default function CollectionPage() {
 
   function confirmScannedCard() {
     if (!scanResult) return;
-    addCardToCollection(scanResult, scanFolder, scanQuantity);
+    addCardToCollection(scanResult, scanFolder, scanQuantity, scanLanguage, scanFoil);
     setShowScanModal(false);
     setScanPreview("");
     setScanStatus("");
     setScanResult(null);
     setScanQuantity(1);
+    setScanLanguage("fr");
+    setScanFoil(false);
   }
 
   function openFullsetAdd(card: ScryfallCard) {
     setPendingFullsetCard(card);
     setPendingFullsetFolder(openedFolder && openedFolder !== "__ALL__" ? openedFolder : "Non classé");
     setPendingFullsetQuantity(1);
+    setPendingFullsetLanguage("fr");
+    setPendingFullsetFoil(false);
   }
 
   function confirmFullsetAdd() {
     if (!pendingFullsetCard) return;
-    addCardToCollection(pendingFullsetCard, pendingFullsetFolder, pendingFullsetQuantity);
+    addCardToCollection(pendingFullsetCard, pendingFullsetFolder, pendingFullsetQuantity, pendingFullsetLanguage, pendingFullsetFoil);
     setPendingFullsetCard(null);
     setPendingFullsetQuantity(1);
   }
@@ -653,6 +693,10 @@ export default function CollectionPage() {
           setQuantity={setQuantity}
           selectedFolder={selectedFolder}
           setSelectedFolder={setSelectedFolder}
+          selectedLanguage={selectedLanguage}
+          setSelectedLanguage={setSelectedLanguage}
+          selectedFoil={selectedFoil}
+          setSelectedFoil={setSelectedFoil}
           suggestions={suggestions}
           setSuggestions={setSuggestions}
           printOptions={printOptions}
@@ -674,6 +718,10 @@ export default function CollectionPage() {
           setScanFolder={setScanFolder}
           scanQuantity={scanQuantity}
           setScanQuantity={setScanQuantity}
+          scanLanguage={scanLanguage}
+          setScanLanguage={setScanLanguage}
+          scanFoil={scanFoil}
+          setScanFoil={setScanFoil}
           scanPreview={scanPreview}
           scanStatus={scanStatus}
           scanResult={scanResult}
@@ -693,6 +741,10 @@ export default function CollectionPage() {
           setSelectedFolder={setPendingFullsetFolder}
           quantity={pendingFullsetQuantity}
           setQuantity={setPendingFullsetQuantity}
+          selectedLanguage={pendingFullsetLanguage}
+          setSelectedLanguage={setPendingFullsetLanguage}
+          selectedFoil={pendingFullsetFoil}
+          setSelectedFoil={setPendingFullsetFoil}
           onClose={() => setPendingFullsetCard(null)}
           onConfirm={confirmFullsetAdd}
         />
@@ -1159,6 +1211,10 @@ function CardTile({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; o
       {card.image ? <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" /> : <div className="aspect-[63/88] rounded-lg bg-black/30" />}
       <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
       <p className="text-[10px] text-white/60">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
+      <div className="mt-1 flex flex-wrap gap-1 text-[9px] font-black uppercase tracking-wide">
+        <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/70">{(card.language || "fr").toUpperCase()}</span>
+        {card.foil && <span className="rounded bg-yellow-400/20 px-1.5 py-0.5 text-yellow-200">FOIL</span>}
+      </div>
       <div className="mt-2 grid grid-cols-3 gap-1">
         <button onClick={onMinus} className="rounded-lg bg-black/70 py-1 text-sm font-black">−</button>
         <button onClick={onPlus} className="rounded-lg bg-[#f59e0b] py-1 text-sm font-black text-black">+</button>
@@ -1175,6 +1231,10 @@ function CardRow({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; on
       <div className="min-w-0 flex-1">
         <p className="truncate font-black">{card.name}</p>
         <p className="text-xs text-white/60">{card.setCode?.toUpperCase()} #{card.collectorNumber}</p>
+        <div className="mt-1 flex flex-wrap gap-1 text-[10px] font-black uppercase tracking-wide">
+          <span className="rounded bg-white/10 px-2 py-0.5 text-white/70">{getLanguageLabel(card.language)}</span>
+          {card.foil && <span className="rounded bg-yellow-400/20 px-2 py-0.5 text-yellow-200">FOIL</span>}
+        </div>
         <p className="mt-1 text-sm font-black">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
         <div className="mt-2 flex gap-2">
           <button onClick={onMinus} className="rounded-lg bg-black/30 px-3 py-1">−</button>
@@ -1222,6 +1282,49 @@ function FolderModal({
   );
 }
 
+function CardVariantControls({
+  language,
+  setLanguage,
+  foil,
+  setFoil,
+}: {
+  language: string;
+  setLanguage: (value: string) => void;
+  foil: boolean;
+  setFoil: (value: boolean) => void;
+}) {
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+      <label className="block">
+        <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.14em] text-white/45">Langue</span>
+        <select
+          value={language}
+          onChange={(event) => setLanguage(event.target.value)}
+          className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold text-white outline-none"
+        >
+          {CARD_LANGUAGE_OPTIONS.map((item) => (
+            <option key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex items-end">
+        <button
+          type="button"
+          onClick={() => setFoil(!foil)}
+          className={`h-[46px] w-full rounded-xl border px-4 font-black transition sm:w-28 ${
+            foil ? "border-yellow-300/50 bg-yellow-400 text-black" : "border-white/10 bg-black/30 text-white/70"
+          }`}
+        >
+          {foil ? "FOIL" : "Non foil"}
+        </button>
+      </label>
+    </div>
+  );
+}
+
 function AddCardModal({
   folders,
   cardName,
@@ -1230,6 +1333,10 @@ function AddCardModal({
   setQuantity,
   selectedFolder,
   setSelectedFolder,
+  selectedLanguage,
+  setSelectedLanguage,
+  selectedFoil,
+  setSelectedFoil,
   suggestions,
   setSuggestions,
   printOptions,
@@ -1249,6 +1356,10 @@ function AddCardModal({
   setQuantity: (value: number) => void;
   selectedFolder: string;
   setSelectedFolder: (value: string) => void;
+  selectedLanguage: string;
+  setSelectedLanguage: (value: string) => void;
+  selectedFoil: boolean;
+  setSelectedFoil: (value: boolean) => void;
   suggestions: string[];
   setSuggestions: (value: string[]) => void;
   printOptions: ScryfallCard[];
@@ -1273,6 +1384,12 @@ function AddCardModal({
           <input type="number" min={1} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
           <select value={selectedFolder} onChange={(event) => setSelectedFolder(event.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">{folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select>
         </div>
+        <CardVariantControls
+          language={selectedLanguage}
+          setLanguage={setSelectedLanguage}
+          foil={selectedFoil}
+          setFoil={setSelectedFoil}
+        />
         <button onClick={onSearch} disabled={isSearching} className="mt-3 w-full rounded-xl bg-white/[0.08] py-3 font-black disabled:opacity-50">{isSearching ? "Recherche..." : "Chercher les éditions"}</button>
         {printOptions.length > 0 && <div className="mt-3 rounded-xl bg-black/25 p-3"><select value={selectedPrintId} onChange={(event) => setSelectedPrintId(event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">{printOptions.map((card) => <option key={card.id} value={card.id}>{card.set_name} · #{card.collector_number} · {card.rarity}</option>)}</select><button onClick={onAdd} disabled={isAdding} className="mt-3 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black disabled:opacity-50">Ajouter</button></div>}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p>}
@@ -1287,6 +1404,10 @@ function ScanModal({
   setScanFolder,
   scanQuantity,
   setScanQuantity,
+  scanLanguage,
+  setScanLanguage,
+  scanFoil,
+  setScanFoil,
   scanPreview,
   scanStatus,
   scanResult,
@@ -1301,6 +1422,10 @@ function ScanModal({
   setScanFolder: (value: string) => void;
   scanQuantity: number;
   setScanQuantity: (value: number) => void;
+  scanLanguage: string;
+  setScanLanguage: (value: string) => void;
+  scanFoil: boolean;
+  setScanFoil: (value: boolean) => void;
   scanPreview: string;
   scanStatus: string;
   scanResult: ScryfallCard | null;
@@ -1444,7 +1569,7 @@ function ScanModal({
               <div className="min-w-0 flex-1">
                 <p className="truncate font-black">{scanResult.name}</p>
                 <p className="text-xs text-white/60">{scanResult.set_name} · #{scanResult.collector_number}</p>
-                <p className="text-sm font-black">{formatCurrency(getCardPrice(scanResult), 2)}</p>
+                <p className="text-sm font-black">{formatCurrency(getCardPrice(scanResult, scanFoil), 2)}</p>
               </div>
             </div>
           )}
@@ -1466,6 +1591,12 @@ function ScanModal({
             {folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}
           </select>
         </div>
+        <CardVariantControls
+          language={scanLanguage}
+          setLanguage={setScanLanguage}
+          foil={scanFoil}
+          setFoil={setScanFoil}
+        />
 
         <button
           disabled={!scanResult || isScanning}
@@ -1486,6 +1617,10 @@ function FullsetAddModal({
   setSelectedFolder,
   quantity,
   setQuantity,
+  selectedLanguage,
+  setSelectedLanguage,
+  selectedFoil,
+  setSelectedFoil,
   onClose,
   onConfirm,
 }: {
@@ -1495,14 +1630,18 @@ function FullsetAddModal({
   setSelectedFolder: (value: string) => void;
   quantity: number;
   setQuantity: (value: number) => void;
+  selectedLanguage: string;
+  setSelectedLanguage: (value: string) => void;
+  selectedFoil: boolean;
+  setSelectedFoil: (value: boolean) => void;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   const cardImage = getCardImage(card);
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/85 p-3 backdrop-blur-md">
-      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-white/10 bg-[#17181f] p-4 text-white shadow-2xl md:p-5">
+    <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/85 p-0 backdrop-blur-md sm:items-center sm:p-3">
+      <div className="max-h-[94vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-white/10 bg-[#17181f] p-4 pb-6 text-white shadow-2xl sm:rounded-3xl md:max-w-3xl md:p-5">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-black">Aperçu de la carte</h2>
@@ -1511,13 +1650,13 @@ function FullsetAddModal({
           <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-lg font-black">✕</button>
         </div>
 
-        <div className="mt-5 grid gap-5 md:grid-cols-[320px_1fr] md:items-start">
-          <div className="mx-auto w-full max-w-[320px]">
+        <div className="mt-4 grid gap-4 md:grid-cols-[280px_1fr] md:items-start">
+          <div className="mx-auto w-full max-w-[230px] sm:max-w-[260px] md:max-w-[280px]">
             {cardImage ? (
               <img
                 src={cardImage}
                 alt={card.name}
-                className="aspect-[63/88] w-full rounded-2xl object-cover shadow-2xl ring-1 ring-white/10"
+                className="aspect-[63/88] max-h-[46vh] w-full rounded-2xl object-contain shadow-2xl ring-1 ring-white/10"
               />
             ) : (
               <div className="flex aspect-[63/88] w-full items-center justify-center rounded-2xl bg-black/40 text-center text-sm font-bold text-white/50">
@@ -1545,7 +1684,7 @@ function FullsetAddModal({
               </div>
               <div className="rounded-xl bg-black/25 p-3">
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-white/40">Prix</p>
-                <p className="mt-1 font-black text-[#f59e0b]">{formatCurrency(getCardPrice(card), 2)}</p>
+                <p className="mt-1 font-black text-[#f59e0b]">{formatCurrency(getCardPrice(card, selectedFoil), 2)}</p>
               </div>
             </div>
 
@@ -1565,6 +1704,12 @@ function FullsetAddModal({
                 {folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}
               </select>
             </div>
+            <CardVariantControls
+              language={selectedLanguage}
+              setLanguage={setSelectedLanguage}
+              foil={selectedFoil}
+              setFoil={setSelectedFoil}
+            />
 
             <button onClick={onConfirm} className="mt-5 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black">Ajouter au dossier</button>
           </div>
