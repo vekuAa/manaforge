@@ -10,24 +10,18 @@ import { createClient } from "@/lib/supabase/client";
 type DeckCard = {
   name: string;
   quantity: number;
+  image?: string;
+  setName?: string;
+  setCode?: string;
+  collectorNumber?: string;
+  rarity?: string;
   typeLine?: string;
   oracleText?: string;
   manaValue?: number;
   price?: number;
 };
 
-type ScryfallCard = {
-  name: string;
-  type_line?: string;
-  oracle_text?: string;
-  cmc?: number;
-  prices?: {
-    eur?: string | null;
-    usd?: string | null;
-    eur_foil?: string | null;
-    usd_foil?: string | null;
-  };
-};
+
 
 type Deck = {
   id: string | number;
@@ -181,6 +175,9 @@ export default function DecksPage() {
   const [archidektUrl, setArchidektUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  const [deckViewMode, setDeckViewMode] = useState<"grid" | "list">("grid");
+  const [deckCategoryFilter, setDeckCategoryFilter] = useState("Toutes");
+  const [isAddingToCollection, setIsAddingToCollection] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -321,52 +318,81 @@ export default function DecksPage() {
     return { image, colors, price };
   }
 
-async function enrichDecklist(decklist: DeckCard[]) {
-  const response = await fetch("/api/scryfall/collection", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      cards: decklist.map((card) => ({
-        name: card.name,
-      })),
-    }),
-  });
+type ScryfallCard = {
+  name: string;
+  set_name?: string;
+  set?: string;
+  collector_number?: string;
+  rarity?: string;
+  type_line?: string;
+  oracle_text?: string;
+  cmc?: number;
+  image_uris?: {
+    normal?: string;
+    art_crop?: string;
+  };
+  card_faces?: {
+    oracle_text?: string;
+    image_uris?: {
+      normal?: string;
+      art_crop?: string;
+    };
+  }[];
+  prices?: {
+    eur?: string | null;
+    usd?: string | null;
+    eur_foil?: string | null;
+    usd_foil?: string | null;
+  };
+};
 
-  if (!response.ok) {
-    return decklist;
+
+  async function enrichDecklist(decklist: DeckCard[]): Promise<DeckCard[]> {
+    const response = await fetch("/api/scryfall/collection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cards: decklist.map((card) => ({ name: card.name })),
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Scryfall collection error:", response.status, errorText);
+      return decklist;
+    }
+
+    const data = await response.json();
+    const foundCards: ScryfallCard[] = Array.isArray(data.data) ? data.data : [];
+
+    return decklist.map((card) => {
+      const found = foundCards.find((item) => item.name.toLowerCase() === card.name.toLowerCase());
+      const image = found?.image_uris?.normal || found?.card_faces?.[0]?.image_uris?.normal || "";
+      const oracleText = found?.oracle_text || found?.card_faces?.[0]?.oracle_text || "";
+      const price = Number(
+        found?.prices?.eur ||
+          found?.prices?.usd ||
+          found?.prices?.eur_foil ||
+          found?.prices?.usd_foil ||
+          0,
+      );
+
+      return {
+        ...card,
+        image: image || card.image,
+        setName: found?.set_name || card.setName || "",
+        setCode: found?.set || card.setCode || "",
+        collectorNumber: found?.collector_number || card.collectorNumber || "",
+        rarity: found?.rarity || card.rarity || "",
+        price,
+        typeLine: found?.type_line || card.typeLine || "",
+        oracleText: oracleText || card.oracleText || "",
+        manaValue: Number(found?.cmc || card.manaValue || 0),
+      };
+    });
   }
 
-  const data = await response.json();
 
-  const foundCards: ScryfallCard[] = Array.isArray(data.data)
-    ? data.data
-    : [];
-
-  return decklist.map((card) => {
-    const found = foundCards.find(
-      (item) =>
-        item.name.toLowerCase() === card.name.toLowerCase()
-    );
-
-    const price = Number(
-      found?.prices?.eur ||
-      found?.prices?.usd ||
-      found?.prices?.eur_foil ||
-      found?.prices?.usd_foil ||
-      0
-    );
-
-    return {
-      ...card,
-      price,
-      typeLine: found?.type_line || "",
-      oracleText: found?.oracle_text || "",
-      manaValue: Number(found?.cmc || 0),
-    };
-  });
-}
   async function addDeck() {
     if (!newDeckName.trim() || !newCommander.trim()) return;
 
@@ -527,6 +553,47 @@ async function enrichDecklist(decklist: DeckCard[]) {
     if (error) setImportError(error.message);
   }
 
+  async function addDeckToCollection(deck: Deck) {
+    if (!userId) {
+      setImportError("Connecte-toi pour ajouter ce deck à ta collection.");
+      return;
+    }
+
+    if (!deck.decklist || deck.decklist.length === 0) {
+      setImportError("Ce deck ne contient aucune carte à ajouter.");
+      return;
+    }
+
+    try {
+      setIsAddingToCollection(true);
+      setImportError("");
+
+      const cardsToInsert = deck.decklist.map((card) => ({
+        user_id: userId,
+        folder_id: null,
+        scryfall_id: null,
+        name: card.name,
+        image: card.image || null,
+        set_name: card.setName || null,
+        set_code: card.setCode || null,
+        collector_number: card.collectorNumber || null,
+        language: "fr",
+        foil: false,
+        quantity: Number(card.quantity || 1),
+        price: Number(card.price || 0),
+      }));
+
+      const { error } = await supabase.from("collection_cards").insert(cardsToInsert);
+      if (error) throw error;
+
+      setSyncStatus("Deck ajouté à ta collection.");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Impossible d’ajouter le deck à la collection.");
+    } finally {
+      setIsAddingToCollection(false);
+    }
+  }
+
   if (!hasLoaded) {
     return (
       <main className="page">
@@ -605,65 +672,218 @@ async function enrichDecklist(decklist: DeckCard[]) {
         )}
 
         {selectedDeck && (
-          <div className="mt-6 card-premium overflow-hidden p-5">
-            <div className="grid gap-5 md:grid-cols-[150px_1fr]">
-              {selectedDeck.commanderImage ? <img src={selectedDeck.commanderImage} alt={selectedDeck.commander} className="h-44 w-32 rounded-2xl object-cover" /> : <div className="flex h-44 w-32 items-center justify-center rounded-2xl bg-black/40 text-5xl">🎴</div>}
-              <div className="min-w-0">
-                <p className="text-sm font-bold uppercase tracking-[0.2em] text-muted">Deck sélectionné</p>
-                <h2 className="mt-2 text-2xl font-black">{selectedDeck.name}</h2>
-                <p className="mt-1 font-bold text-accent">{selectedDeck.commander}</p>
-                <div className="mt-4 space-y-2 text-sm text-muted">
-                  <p>Couleurs : {selectedDeck.colors}</p>
-                  <p>Cartes : {selectedDeck.cards}</p>
-                  <p>Prix commandant : {formatCurrency(selectedDeck.price)}</p>
-                  <p>Prix du deck : {formatCurrency(analysis.totalPrice)}</p>
-                </div>
-
-                {selectedDeck.decklist && selectedDeck.decklist.length > 0 && (
-                  <div className="mt-6">
-                    <h3 className="mb-3 text-sm font-black uppercase tracking-wider text-muted">Decklist</h3>
-                    <div className="max-h-64 overflow-y-auto rounded-2xl bg-black/20 p-3">
-                      {selectedDeck.decklist.map((card, index) => (
-                        <div key={`${card.name}-${index}`} className="flex justify-between gap-3 border-b border-white/5 py-2 text-sm">
-                          <div className="min-w-0">
-                            <div className="truncate font-bold">{card.name}</div>
-                            <div className="text-xs text-muted">MV: {card.manaValue ?? "?"} • {card.price ?? "?"}€</div>
-                          </div>
-                          <span>x{card.quantity}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {selectedDeck.decklist && selectedDeck.decklist.length > 0 && (
-                  <div className="mt-6 rounded-2xl bg-black/30 p-4">
-                    <h3 className="mb-4 text-sm font-black uppercase tracking-wider text-muted">Analyse Scryfall</h3>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <AnalysisBox label="Terrains" value={analysis.lands} />
-                      <AnalysisBox label="Créatures" value={analysis.creatures} />
-                      <AnalysisBox label="Ramp" value={analysis.ramp} />
-                      <AnalysisBox label="Pioche" value={analysis.draw} />
-                      <AnalysisBox label="Removal" value={analysis.removal} />
-                      <AnalysisBox label="Wraths" value={analysis.boardWipes} />
-                      <AnalysisBox label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
-                      <AnalysisBox label="Note" value={`${analysis.score}/10`} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <button onClick={() => void updateDeckStats(selectedDeck.id, "win")} className="rounded-2xl bg-green-500/20 px-4 py-4 font-black text-green-300">+ Victoire</button>
-              <button onClick={() => void updateDeckStats(selectedDeck.id, "loss")} className="rounded-2xl bg-red-500/20 px-4 py-4 font-black text-red-300">+ Défaite</button>
-            </div>
-            <button onClick={() => { if (window.confirm(`Supprimer le deck "${selectedDeck.name}" ?`)) void deleteDeck(selectedDeck.id); }} className="mt-4 w-full rounded-2xl bg-red-500/10 px-4 py-4 font-black text-red-300">Supprimer le deck</button>
-          </div>
+          <DeckDetail
+            deck={selectedDeck}
+            analysis={analysis}
+            viewMode={deckViewMode}
+            setViewMode={setDeckViewMode}
+            categoryFilter={deckCategoryFilter}
+            setCategoryFilter={setDeckCategoryFilter}
+            isAddingToCollection={isAddingToCollection}
+            onAddToCollection={() => void addDeckToCollection(selectedDeck)}
+            onWin={() => void updateDeckStats(selectedDeck.id, "win")}
+            onLoss={() => void updateDeckStats(selectedDeck.id, "loss")}
+            onDelete={() => {
+              if (window.confirm(`Supprimer le deck "${selectedDeck.name}" ?`)) void deleteDeck(selectedDeck.id);
+            }}
+          />
         )}
       </section>
       <BottomNav />
     </main>
+  );
+}
+
+
+function getDeckCardCategory(card: DeckCard) {
+  const type = card.typeLine?.toLowerCase() || "";
+  if (type.includes("land")) return "Terrains";
+  if (type.includes("creature")) return "Créatures";
+  if (type.includes("artifact")) return "Artefacts";
+  if (type.includes("enchantment")) return "Enchantements";
+  if (type.includes("instant")) return "Éphémères";
+  if (type.includes("sorcery")) return "Rituels";
+  if (type.includes("planeswalker")) return "Planeswalkers";
+  return "Autres";
+}
+
+function getCategoryCount(decklist: DeckCard[] | undefined, category: string) {
+  return (decklist || [])
+    .filter((card) => category === "Toutes" || getDeckCardCategory(card) === category)
+    .reduce((total, card) => total + Number(card.quantity || 1), 0);
+}
+
+function DeckDetail({
+  deck,
+  analysis,
+  viewMode,
+  setViewMode,
+  categoryFilter,
+  setCategoryFilter,
+  isAddingToCollection,
+  onAddToCollection,
+  onWin,
+  onLoss,
+  onDelete,
+}: {
+  deck: Deck;
+  analysis: ReturnType<typeof analyzeDeck>;
+  viewMode: "grid" | "list";
+  setViewMode: (mode: "grid" | "list") => void;
+  categoryFilter: string;
+  setCategoryFilter: (category: string) => void;
+  isAddingToCollection: boolean;
+  onAddToCollection: () => void;
+  onWin: () => void;
+  onLoss: () => void;
+  onDelete: () => void;
+}) {
+  const categories = ["Toutes", "Terrains", "Créatures", "Artefacts", "Enchantements", "Éphémères", "Rituels", "Planeswalkers", "Autres"];
+  const visibleCards = (deck.decklist || []).filter((card) => categoryFilter === "Toutes" || getDeckCardCategory(card) === categoryFilter);
+  const games = deck.wins + deck.losses;
+  const winrate = games > 0 ? Math.round((deck.wins / games) * 100) : 0;
+
+  return (
+    <div className="mt-6 space-y-5">
+      <section className="card-premium overflow-hidden p-5">
+        <div className="grid gap-5 md:grid-cols-[180px_1fr]">
+          <div className="mx-auto w-full max-w-[170px]">
+            {deck.commanderImage ? (
+              <img src={deck.commanderImage} alt={deck.commander} className="aspect-[63/88] w-full rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" />
+            ) : (
+              <div className="flex aspect-[63/88] w-full items-center justify-center rounded-2xl bg-black/40 text-5xl">🎴</div>
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <p className="text-sm font-bold uppercase tracking-[0.2em] text-muted">Deck sélectionné</p>
+            <h2 className="mt-2 text-3xl font-black leading-tight">{deck.name}</h2>
+            <p className="mt-1 font-bold text-accent">{deck.commander}</p>
+            <p className="mt-2 text-sm text-muted">{deck.colors} · {deck.cards} cartes · {winrate}% WR</p>
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <DeckMiniStat label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
+              <DeckMiniStat label="Note" value={`${analysis.score}/10`} />
+              <DeckMiniStat label="Terrains" value={analysis.lands} />
+              <DeckMiniStat label="Créatures" value={analysis.creatures} />
+            </div>
+
+            <button
+              onClick={onAddToCollection}
+              disabled={isAddingToCollection || !deck.decklist?.length}
+              className="mt-5 w-full rounded-2xl bg-[#f59e0b] px-4 py-4 font-black text-black disabled:opacity-50"
+            >
+              {isAddingToCollection ? "Ajout en cours..." : "Ajouter ce deck à ma collection"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="card-soft p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-black">Decklist</h3>
+            <p className="text-sm text-muted">Affichage moderne par type de carte.</p>
+          </div>
+          <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
+        </div>
+
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+          {categories.map((category) => (
+            <button
+              key={category}
+              onClick={() => setCategoryFilter(category)}
+              className={`shrink-0 rounded-full border px-3 py-2 text-xs font-black ${categoryFilter === category ? "border-[#f59e0b] bg-[#f59e0b] text-black" : "border-white/10 bg-black/25 text-white/70"}`}
+            >
+              {category} {getCategoryCount(deck.decklist, category)}
+            </button>
+          ))}
+        </div>
+
+        <div className={viewMode === "grid" ? "mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5" : "mt-4 grid gap-3"}>
+          {visibleCards.length === 0 ? (
+            <p className="col-span-full rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center text-muted">Aucune carte dans cette catégorie.</p>
+          ) : (
+            visibleCards.map((card, index) =>
+              viewMode === "grid" ? (
+                <DeckCardTile key={`${card.name}-${index}`} card={card} />
+              ) : (
+                <DeckCardRow key={`${card.name}-${index}`} card={card} />
+              ),
+            )
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-2xl bg-black/30 p-4">
+        <h3 className="mb-4 text-sm font-black uppercase tracking-wider text-muted">Analyse Scryfall</h3>
+        <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+          <AnalysisBox label="Ramp" value={analysis.ramp} />
+          <AnalysisBox label="Pioche" value={analysis.draw} />
+          <AnalysisBox label="Removal" value={analysis.removal} />
+          <AnalysisBox label="Wraths" value={analysis.boardWipes} />
+          <AnalysisBox label="Artefacts" value={analysis.artifacts} />
+          <AnalysisBox label="Enchant." value={analysis.enchantments} />
+          <AnalysisBox label="MV moyen" value={analysis.averageManaValue} />
+          <AnalysisBox label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
+        </div>
+      </section>
+
+      <div className="grid grid-cols-2 gap-3">
+        <button onClick={onWin} className="rounded-2xl bg-green-500/20 px-4 py-4 font-black text-green-300">+ Victoire</button>
+        <button onClick={onLoss} className="rounded-2xl bg-red-500/20 px-4 py-4 font-black text-red-300">+ Défaite</button>
+      </div>
+      <button onClick={onDelete} className="w-full rounded-2xl bg-red-500/10 px-4 py-4 font-black text-red-300">Supprimer le deck</button>
+    </div>
+  );
+}
+
+function DeckMiniStat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-2xl bg-black/25 p-4 text-center">
+      <p className="text-2xl font-black text-accent">{value}</p>
+      <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted">{label}</p>
+    </div>
+  );
+}
+
+function ViewToggle({ viewMode, setViewMode }: { viewMode: "grid" | "list"; setViewMode: (mode: "grid" | "list") => void }) {
+  return (
+    <div className="inline-flex rounded-xl border border-white/10 bg-black/25 p-1">
+      <button onClick={() => setViewMode("grid")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${viewMode === "grid" ? "bg-[#f59e0b] text-black" : "text-white/70"}`}>Grille</button>
+      <button onClick={() => setViewMode("list")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${viewMode === "list" ? "bg-[#f59e0b] text-black" : "text-white/70"}`}>Liste</button>
+    </div>
+  );
+}
+
+function DeckCardTile({ card }: { card: DeckCard }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.055] p-1.5">
+      {card.image ? (
+        <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" />
+      ) : (
+        <div className="flex aspect-[63/88] items-center justify-center rounded-lg bg-black/30 text-2xl">🎴</div>
+      )}
+      <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
+      <p className="text-[10px] text-white/60">{formatCurrency(Number(card.price || 0))} · x{card.quantity}</p>
+    </div>
+  );
+}
+
+function DeckCardRow({ card }: { card: DeckCard }) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
+      {card.image ? (
+        <img src={card.image} alt={card.name} className="h-20 w-14 rounded-lg object-cover" />
+      ) : (
+        <div className="flex h-20 w-14 items-center justify-center rounded-lg bg-black/30 text-xl">🎴</div>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-black">{card.name}</p>
+        <p className="text-xs text-white/60">{getDeckCardCategory(card)} · MV {card.manaValue ?? "?"}</p>
+        <p className="mt-1 text-sm font-black">{formatCurrency(Number(card.price || 0) * Number(card.quantity || 1))} · x{card.quantity}</p>
+      </div>
+    </div>
   );
 }
 
