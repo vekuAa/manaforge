@@ -193,7 +193,7 @@ export default function DecksPage() {
         if (!currentUser) {
           if (!cancelled) {
             setDecks(parsedDecks);
-            setSelectedDeckId(parsedDecks[0]?.id ?? null);
+            setSelectedDeckId(null);
             setSyncStatus("Connecte-toi pour sauvegarder tes decks dans le cloud.");
           }
           return;
@@ -237,7 +237,7 @@ export default function DecksPage() {
 
         if (!cancelled) {
           setDecks(cloudDecks);
-          setSelectedDeckId(cloudDecks[0]?.id ?? null);
+          setSelectedDeckId(null);
           setSyncStatus(cloudDecks.length > 0 ? "Decks synchronisés avec ton compte." : "Aucun deck cloud pour le moment.");
         }
       } catch (error) {
@@ -297,6 +297,16 @@ export default function DecksPage() {
 
   const selectedDeck = decks.find((deck) => deck.id === selectedDeckId);
   const analysis = analyzeDeck(selectedDeck?.decklist);
+
+  function getDeckTotalPrice(decklist: DeckCard[]) {
+    return Math.round(
+      decklist.reduce(
+        (total, card) => total + Number(card.price || 0) * Number(card.quantity || 1),
+        0,
+      ) * 100,
+    ) / 100;
+  }
+
 
   async function getCommanderImage(commanderName: string) {
     const response = await fetch(
@@ -379,7 +389,7 @@ type ScryfallCard = {
 
       return {
         ...card,
-        image: image || card.image,
+        image: image || card.image || "",
         setName: found?.set_name || card.setName || "",
         setCode: found?.set || card.setCode || "",
         collectorNumber: found?.collector_number || card.collectorNumber || "",
@@ -523,7 +533,7 @@ type ScryfallCard = {
     setDecks(remainingDecks);
 
     if (selectedDeckId === deckId) {
-      setSelectedDeckId(remainingDecks[0]?.id ?? null);
+      setSelectedDeckId(null);
     }
 
     if (!userId || typeof deckId !== "string") return;
@@ -680,6 +690,7 @@ type ScryfallCard = {
             categoryFilter={deckCategoryFilter}
             setCategoryFilter={setDeckCategoryFilter}
             isAddingToCollection={isAddingToCollection}
+            onClose={() => setSelectedDeckId(null)}
             onAddToCollection={() => void addDeckToCollection(selectedDeck)}
             onWin={() => void updateDeckStats(selectedDeck.id, "win")}
             onLoss={() => void updateDeckStats(selectedDeck.id, "loss")}
@@ -721,6 +732,7 @@ function DeckDetail({
   categoryFilter,
   setCategoryFilter,
   isAddingToCollection,
+  onClose,
   onAddToCollection,
   onWin,
   onLoss,
@@ -733,6 +745,7 @@ function DeckDetail({
   categoryFilter: string;
   setCategoryFilter: (category: string) => void;
   isAddingToCollection: boolean;
+  onClose: () => void;
   onAddToCollection: () => void;
   onWin: () => void;
   onLoss: () => void;
@@ -745,6 +758,13 @@ function DeckDetail({
 
   return (
     <div className="mt-6 space-y-5">
+      <button
+        onClick={onClose}
+        className="rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-black text-white/80"
+      >
+        ← Retour à mes decks
+      </button>
+
       <section className="card-premium overflow-hidden p-5">
         <div className="grid gap-5 md:grid-cols-[180px_1fr]">
           <div className="mx-auto w-full max-w-[170px]">
