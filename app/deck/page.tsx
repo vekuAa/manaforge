@@ -308,18 +308,49 @@ export default function DecksPage() {
     return { image, colors, price };
   }
 
-  async function enrichDecklist(decklist: DeckCard[]): Promise<DeckCard[]> {
-    // Important : on ne fait plus 100 requêtes Scryfall au moment de l’import.
-    // Avant, 1 carte = 1 fetch /cards/named depuis le navigateur, ce qui provoquait CORS + 429.
-    // On garde la decklist légère et on enrichira les cartes plus tard avec un cache serveur.
-    return decklist.map((card) => ({
-      ...card,
-      typeLine: card.typeLine || "",
-      oracleText: card.oracleText || "",
-      manaValue: card.manaValue ?? 0,
-      price: card.price ?? 0,
-    }));
+async function enrichDecklist(decklist: DeckCard[]) {
+  const response = await fetch("/api/scryfall/collection", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      cards: decklist.map((card) => ({
+        name: card.name,
+      })),
+    }),
+  });
+
+  if (!response.ok) {
+    return decklist;
   }
+
+  const data = await response.json();
+
+  const foundCards = Array.isArray(data.data) ? data.data : [];
+
+  return decklist.map((card) => {
+    const found = foundCards.find(
+      (item: any) => item.name?.toLowerCase() === card.name.toLowerCase()
+    );
+
+    const price = Number(
+      found?.prices?.eur ||
+      found?.prices?.usd ||
+      found?.prices?.eur_foil ||
+      found?.prices?.usd_foil ||
+      0
+    );
+
+    return {
+      ...card,
+      price,
+      typeLine: found?.type_line || card.typeLine || "",
+      oracleText: found?.oracle_text || card.oracleText || "",
+      manaValue: Number(found?.cmc || card.manaValue || 0),
+    };
+  });
+}
 
   async function addDeck() {
     if (!newDeckName.trim() || !newCommander.trim()) return;
