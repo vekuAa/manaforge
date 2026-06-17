@@ -111,6 +111,10 @@ export default function CollectionPage() {
   const [search, setSearch] = useState("");
   const [setFilter, setSetFilter] = useState("Toutes");
   const [activeHomeTab, setActiveHomeTab] = useState<"collection" | "fullset">("collection");
+  const [fullsetViewMode, setFullsetViewMode] = useState<"grid" | "list">("list");
+  const [pendingFullsetCard, setPendingFullsetCard] = useState<ScryfallCard | null>(null);
+  const [pendingFullsetFolder, setPendingFullsetFolder] = useState("Non classé");
+  const [pendingFullsetQuantity, setPendingFullsetQuantity] = useState(1);
 
   const [fullsetCode, setFullsetCode] = useState("");
   const [fullsetCards, setFullsetCards] = useState<ScryfallCard[]>([]);
@@ -515,6 +519,19 @@ export default function CollectionPage() {
     setScanQuantity(1);
   }
 
+  function openFullsetAdd(card: ScryfallCard) {
+    setPendingFullsetCard(card);
+    setPendingFullsetFolder(openedFolder && openedFolder !== "__ALL__" ? openedFolder : "Non classé");
+    setPendingFullsetQuantity(1);
+  }
+
+  function confirmFullsetAdd() {
+    if (!pendingFullsetCard) return;
+    addCardToCollection(pendingFullsetCard, pendingFullsetFolder, pendingFullsetQuantity);
+    setPendingFullsetCard(null);
+    setPendingFullsetQuantity(1);
+  }
+
   if (!hasLoaded) {
     return (
       <main className="min-h-screen bg-[#101116] text-white">
@@ -538,6 +555,10 @@ export default function CollectionPage() {
             setFullsetCode={setFullsetCode}
             fullsetCards={fullsetCards}
             fullsetProgress={fullsetProgress}
+            fullsetViewMode={fullsetViewMode}
+            setFullsetViewMode={setFullsetViewMode}
+            ownedCards={cards}
+            onAddFullsetCard={openFullsetAdd}
             isLoadingFullset={isLoadingFullset}
             fullsetError={error}
             onLoadFullset={loadFullset}
@@ -672,6 +693,19 @@ export default function CollectionPage() {
         />
       )}
 
+      {pendingFullsetCard && (
+        <FullsetAddModal
+          card={pendingFullsetCard}
+          folders={folders}
+          selectedFolder={pendingFullsetFolder}
+          setSelectedFolder={setPendingFullsetFolder}
+          quantity={pendingFullsetQuantity}
+          setQuantity={setPendingFullsetQuantity}
+          onClose={() => setPendingFullsetCard(null)}
+          onConfirm={confirmFullsetAdd}
+        />
+      )}
+
       <BottomNav />
     </main>
   );
@@ -686,6 +720,10 @@ function CollectionHome({
   setFullsetCode,
   fullsetCards,
   fullsetProgress,
+  fullsetViewMode,
+  setFullsetViewMode,
+  ownedCards,
+  onAddFullsetCard,
   isLoadingFullset,
   fullsetError,
   onLoadFullset,
@@ -705,6 +743,10 @@ function CollectionHome({
   setFullsetCode: (value: string) => void;
   fullsetCards: ScryfallCard[];
   fullsetProgress: { owned: number; total: number; percent: number; missing: ScryfallCard[] };
+  fullsetViewMode: "grid" | "list";
+  setFullsetViewMode: (mode: "grid" | "list") => void;
+  ownedCards: CollectionCard[];
+  onAddFullsetCard: (card: ScryfallCard) => void;
   isLoadingFullset: boolean;
   fullsetError: string;
   onLoadFullset: () => void;
@@ -785,6 +827,10 @@ function CollectionHome({
           progress={fullsetProgress}
           isLoading={isLoadingFullset}
           error={fullsetError}
+          viewMode={fullsetViewMode}
+          setViewMode={setFullsetViewMode}
+          ownedCards={ownedCards}
+          onAddCard={onAddFullsetCard}
           onLoad={onLoadFullset}
         />
       )}
@@ -799,6 +845,10 @@ function FullsetPanel({
   progress,
   isLoading,
   error,
+  viewMode,
+  setViewMode,
+  ownedCards,
+  onAddCard,
   onLoad,
 }: {
   fullsetCode: string;
@@ -807,48 +857,98 @@ function FullsetPanel({
   progress: { owned: number; total: number; percent: number; missing: ScryfallCard[] };
   isLoading: boolean;
   error: string;
+  viewMode: "grid" | "list";
+  setViewMode: (mode: "grid" | "list") => void;
+  ownedCards: CollectionCard[];
+  onAddCard: (card: ScryfallCard) => void;
   onLoad: () => void;
 }) {
+  const cleanSet = fullsetCode.trim().toLowerCase();
+  const ownedNumbers = new Set(
+    ownedCards
+      .filter((card) => card.setCode?.toLowerCase() === cleanSet)
+      .map((card) => card.collectorNumber),
+  );
+
   return (
     <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.055] p-4">
-      <h2 className="text-xl font-black">Suivi Full set</h2>
-      <p className="mt-1 text-sm font-bold text-white/55">Entre un code d’extension : MH3, LTR, FIN, DFT...</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-black">Full set interactif</h2>
+          <p className="mt-1 text-sm font-bold text-white/55">Tape un code comme MH3 : ManaForge charge toutes les cartes du set.</p>
+        </div>
+        <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
+      </div>
 
       <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
         <input
           value={fullsetCode}
           onChange={(event) => setFullsetCode(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onLoad();
+          }}
           placeholder="mh3"
           className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-black uppercase outline-none"
         />
         <button onClick={onLoad} disabled={isLoading} className="rounded-xl bg-[#f59e0b] px-5 py-3 font-black text-black disabled:opacity-50">
-          {isLoading ? "..." : "Analyser"}
+          {isLoading ? "..." : "Charger"}
         </button>
       </div>
 
       {error && <p className="mt-3 rounded-xl bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p>}
 
       {fullsetCards.length > 0 && (
-        <div className="mt-5 rounded-2xl bg-black/25 p-4">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="text-sm font-bold text-white/55">Progression</p>
-              <p className="text-2xl font-black">{progress.owned}/{progress.total}</p>
+        <div className="mt-5">
+          <div className="rounded-2xl bg-black/25 p-4">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-white/55">Progression</p>
+                <p className="text-2xl font-black">{progress.owned}/{progress.total}</p>
+              </div>
+              <p className="text-2xl font-black text-[#f59e0b]">{progress.percent}%</p>
             </div>
-            <p className="text-2xl font-black text-[#f59e0b]">{progress.percent}%</p>
-          </div>
-          <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-[#f59e0b]" style={{ width: `${progress.percent}%` }} />
+            <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-[#f59e0b]" style={{ width: `${progress.percent}%` }} />
+            </div>
           </div>
 
-          <h3 className="mt-5 font-black">Cartes manquantes</h3>
-          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-            {progress.missing.slice(0, 120).map((card) => (
-              <div key={card.id} className="flex items-center justify-between rounded-xl bg-white/[0.06] p-3 text-sm">
-                <span className="truncate font-bold">{card.name}</span>
-                <span className="ml-3 shrink-0 text-white/55">#{card.collector_number}</span>
-              </div>
-            ))}
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Toutes les cartes du set</p>
+            <p className="text-xs font-bold text-white/50">Clique pour ajouter</p>
+          </div>
+
+          <div className={viewMode === "grid" ? "mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5" : "mt-3 grid gap-2"}>
+            {fullsetCards.map((card) => {
+              const owned = ownedNumbers.has(card.collector_number || "");
+              return viewMode === "grid" ? (
+                <button
+                  key={card.id}
+                  onClick={() => onAddCard(card)}
+                  className={`relative rounded-xl border p-1.5 text-left transition active:scale-[0.98] ${owned ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/[0.05]"}`}
+                >
+                  {getCardImage(card) ? <img src={getCardImage(card)} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" /> : <div className="aspect-[63/88] rounded-lg bg-black/30" />}
+                  {owned && <span className="absolute right-2 top-2 rounded-full bg-emerald-400 px-2 py-1 text-[10px] font-black text-black">OK</span>}
+                  <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
+                  <p className="text-[10px] text-white/55">#{card.collector_number} · {formatCurrency(getCardPrice(card), 2)}</p>
+                </button>
+              ) : (
+                <button
+                  key={card.id}
+                  onClick={() => onAddCard(card)}
+                  className={`flex items-center gap-3 rounded-xl border p-3 text-left transition active:scale-[0.99] ${owned ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/[0.055]"}`}
+                >
+                  {getCardArt(card) ? <img src={getCardArt(card)} alt={card.name} className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl bg-black/30" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-black">{card.name}</p>
+                    <p className="text-xs text-white/60">{card.set?.toUpperCase()} #{card.collector_number} · {card.rarity}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-black">{formatCurrency(getCardPrice(card), 2)}</p>
+                    <p className={owned ? "text-xs font-black text-emerald-300" : "text-xs font-bold text-white/45"}>{owned ? "Possédée" : "Ajouter"}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1218,107 +1318,39 @@ function ScanModal({
   onConfirm: () => void;
   onClose: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [cameraError, setCameraError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function startCamera() {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          setCameraError("Caméra indisponible sur ce navigateur. Utilise Chrome/Safari mobile en HTTPS.");
-          return;
-        }
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 1920 },
-          },
-          audio: false,
-        });
-
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-      } catch {
-        setCameraError("Autorise la caméra pour lancer le scanner automatique.");
-      }
-    }
-
-    void startCamera();
-
-    return () => {
-      cancelled = true;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isScanning || scanResult) return undefined;
-
-    const interval = window.setInterval(() => {
-      const video = videoRef.current;
-      if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) return;
-
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext("2d");
-      if (!context) return;
-
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        if (blob && !isScanning && !scanResult) onFile(blob);
-      }, "image/jpeg", 0.92);
-    }, 2400);
-
-    return () => window.clearInterval(interval);
-  }, [isScanning, onFile, scanResult]);
-
   return (
     <div className="fixed inset-0 z-[100] bg-[#101116] text-white">
       <div className="mx-auto flex h-full max-w-md flex-col px-4 pb-4 pt-3">
         <div className="flex items-center justify-between">
           <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-xl">✕</button>
           <h2 className="font-black">Scanner une carte</h2>
-          <button onClick={() => fileInputRef.current?.click()} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-lg">📷</button>
+          <div className="h-10 w-10" />
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-orange-400/20 bg-orange-400/10 p-3 text-sm font-bold text-orange-100">
+          Mode provisoire : OCR navigateur + Scryfall. Pour un scanner fiable comme ManaBox, il faudra ajouter un vrai moteur de reconnaissance image côté serveur.
         </div>
 
         <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-black/25 p-4">
-          <div className="relative mx-auto flex aspect-[63/88] w-full max-w-[295px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-black/60">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="relative mx-auto flex aspect-[63/88] w-full max-w-[295px] items-center justify-center overflow-hidden rounded-3xl border-2 border-dashed border-white/20 bg-black/60 text-center active:scale-[0.99]"
+          >
             {scanPreview ? (
-              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain opacity-80" />
+              <img src={scanPreview} alt="Carte scannée" className="h-full w-full object-contain opacity-90" />
             ) : (
-              <video ref={videoRef} className="h-full w-full object-cover" muted playsInline autoPlay />
-            )}
-
-            {!scanPreview && cameraError && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 px-6 text-center">
-                <p className="font-black">Caméra bloquée</p>
-                <p className="mt-2 text-sm text-white/60">{cameraError}</p>
-                <button onClick={() => fileInputRef.current?.click()} className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-black text-black">Choisir une photo</button>
+              <div className="px-6">
+                <p className="text-4xl">📷</p>
+                <p className="mt-3 text-lg font-black">Ouvrir l’appareil photo</p>
+                <p className="mt-2 text-sm font-bold text-white/55">Photo droite, nette, nom et bas de carte visibles.</p>
               </div>
             )}
-
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_55%,rgba(0,0,0,.38))]" />
-            <span className="absolute left-5 top-5 h-11 w-11 rounded-tl-2xl border-l-4 border-t-4 border-white" />
-            <span className="absolute right-5 top-5 h-11 w-11 rounded-tr-2xl border-r-4 border-t-4 border-white" />
-            <span className="absolute bottom-5 left-5 h-11 w-11 rounded-bl-2xl border-b-4 border-l-4 border-white" />
-            <span className="absolute bottom-5 right-5 h-11 w-11 rounded-br-2xl border-b-4 border-r-4 border-white" />
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-xs font-black text-white/80 backdrop-blur">Scan automatique</div>
-          </div>
+            <span className="absolute left-5 top-5 h-11 w-11 rounded-tl-2xl border-l-4 border-t-4 border-white/80" />
+            <span className="absolute right-5 top-5 h-11 w-11 rounded-tr-2xl border-r-4 border-t-4 border-white/80" />
+            <span className="absolute bottom-5 left-5 h-11 w-11 rounded-bl-2xl border-b-4 border-l-4 border-white/80" />
+            <span className="absolute bottom-5 right-5 h-11 w-11 rounded-br-2xl border-b-4 border-r-4 border-white/80" />
+          </button>
 
           <input
             ref={fileInputRef}
@@ -1334,7 +1366,7 @@ function ScanModal({
           />
 
           <p className="mt-4 min-h-10 text-center text-sm font-bold text-white/60">
-            {isScanning ? "Analyse automatique en cours..." : scanStatus || "Place la carte dans le cadre. ManaForge lance la reconnaissance tout seul."}
+            {isScanning ? "Analyse OCR en cours..." : scanStatus || "Appuie sur le cadre pour ouvrir directement l’appareil photo."}
           </p>
 
           {scanResult && (
@@ -1373,6 +1405,52 @@ function ScanModal({
         >
           Ajouter la carte au dossier
         </button>
+      </div>
+    </div>
+  );
+}
+
+function FullsetAddModal({
+  card,
+  folders,
+  selectedFolder,
+  setSelectedFolder,
+  quantity,
+  setQuantity,
+  onClose,
+  onConfirm,
+}: {
+  card: ScryfallCard;
+  folders: string[];
+  selectedFolder: string;
+  setSelectedFolder: (value: string) => void;
+  quantity: number;
+  setQuantity: (value: number) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 backdrop-blur">
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#17181f] p-5 text-white">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-black">Ajouter au dossier</h2>
+          <button onClick={onClose}>✕</button>
+        </div>
+        <div className="mt-4 flex gap-3 rounded-2xl bg-white/[0.06] p-3">
+          {getCardArt(card) && <img src={getCardArt(card)} alt={card.name} className="h-20 w-20 rounded-xl object-cover" />}
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-black">{card.name}</p>
+            <p className="text-xs text-white/60">{card.set_name} · #{card.collector_number}</p>
+            <p className="mt-1 font-black">{formatCurrency(getCardPrice(card), 2)}</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-[.7fr_1.3fr] gap-2">
+          <input type="number" min={1} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" />
+          <select value={selectedFolder} onChange={(event) => setSelectedFolder(event.target.value)} className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none">
+            {folders.filter((folder) => folder !== "Toutes").map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+          </select>
+        </div>
+        <button onClick={onConfirm} className="mt-5 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black">Ajouter</button>
       </div>
     </div>
   );
