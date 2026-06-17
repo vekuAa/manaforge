@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import BottomNav from "@/components/BottomNav";
 import { createClient } from "@/lib/supabase/client";
 type CollectionCard = {
-  id: number;
+  id: string | number;
   name: string;
   image?: string;
   quantity: number;
@@ -55,6 +55,23 @@ type FolderRow = {
   user_id: string;
   name: string;
   color: string | null;
+  created_at?: string;
+};
+
+type CollectionCardRow = {
+  id: string;
+  user_id: string;
+  folder_id: string | null;
+  scryfall_id: string | null;
+  name: string;
+  image: string | null;
+  set_name: string | null;
+  set_code: string | null;
+  collector_number: string | null;
+  language: string | null;
+  foil: boolean | null;
+  quantity: number | null;
+  price: number | string | null;
   created_at?: string;
 };
 
@@ -136,6 +153,7 @@ export default function CollectionPage() {
   const [cards, setCards] = useState<CollectionCard[]>([]);
   const [folders, setFolders] = useState<string[]>(["Toutes", "Non classé", "Commander", "Trade", "Staples"]);
   const [folderColors, setFolderColors] = useState<Record<string, string>>(DEFAULT_FOLDER_COLORS);
+  const [folderRows, setFolderRows] = useState<FolderRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [folderSyncStatus, setFolderSyncStatus] = useState("");
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -185,6 +203,28 @@ export default function CollectionPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const supabase = useMemo(() => createClient(), []);
 
+  function getFolderIdByName(folderName: string) {
+    const cleanName = folderName === "Toutes" ? "Non classé" : folderName;
+    return folderRows.find((folder) => folder.name === cleanName)?.id ?? null;
+  }
+
+  function mapCloudCard(row: CollectionCardRow, rows: FolderRow[]): CollectionCard {
+    const folderName = rows.find((folder) => folder.id === row.folder_id)?.name || "Non classé";
+    return {
+      id: row.id,
+      name: row.name,
+      image: row.image || undefined,
+      quantity: Number(row.quantity || 1),
+      price: Number(row.price || 0),
+      setName: row.set_name || undefined,
+      setCode: row.set_code || undefined,
+      collectorNumber: row.collector_number || undefined,
+      folder: folderName,
+      language: row.language || "fr",
+      foil: Boolean(row.foil),
+    };
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -198,18 +238,16 @@ export default function CollectionPage() {
         const localFolders = savedFolders ? (JSON.parse(savedFolders) as string[]) : ["Toutes", "Non classé", "Commander", "Trade", "Staples"];
         const localColors = savedFolderColors ? (JSON.parse(savedFolderColors) as Record<string, string>) : DEFAULT_FOLDER_COLORS;
 
-        if (!cancelled) {
-          setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé", language: card.language || "fr", foil: Boolean(card.foil) })));
-        }
-
         const { data: authData } = await supabase.auth.getUser();
         const currentUser = authData.user;
 
         if (!currentUser) {
           if (!cancelled) {
+            setCards(parsedCards.map((card) => ({ ...card, folder: card.folder || "Non classé", language: card.language || "fr", foil: Boolean(card.foil) })));
             setFolders(localFolders);
             setFolderColors({ ...DEFAULT_FOLDER_COLORS, ...localColors });
-            setFolderSyncStatus("Connecte-toi pour synchroniser tes dossiers.");
+            setFolderRows([]);
+            setFolderSyncStatus("Connecte-toi pour synchroniser ta collection.");
           }
           return;
         }
@@ -256,15 +294,59 @@ export default function CollectionPage() {
           return acc;
         }, { ...DEFAULT_FOLDER_COLORS });
 
+        const { data: remoteCards, error: cardsError } = await supabase
+          .from("collection_cards")
+          .select("id,user_id,folder_id,scryfall_id,name,image,set_name,set_code,collector_number,language,foil,quantity,price,created_at")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: true });
+
+        if (cardsError) throw cardsError;
+
+        let cloudCards = ((remoteCards || []) as CollectionCardRow[]).map((row) => mapCloudCard(row, rows));
+
+        if (cloudCards.length === 0 && parsedCards.length > 0) {
+          const rowsByName = new Map(rows.map((folder) => [folder.name, folder.id]));
+          const cardsToImport = parsedCards.map((card) => {
+            const folderName = card.folder && card.folder !== "Toutes" ? card.folder : "Non classé";
+            return {
+              user_id: currentUser.id,
+              folder_id: rowsByName.get(folderName) || rowsByName.get("Non classé") || null,
+              scryfall_id: null,
+              name: card.name,
+              image: card.image || null,
+              set_name: card.setName || null,
+              set_code: card.setCode || null,
+              collector_number: card.collectorNumber || null,
+              language: card.language || "fr",
+              foil: Boolean(card.foil),
+              quantity: Number(card.quantity || 1),
+              price: Number(card.price || 0),
+            };
+          });
+
+          const { data: importedCards, error: importError } = await supabase
+            .from("collection_cards")
+            .insert(cardsToImport)
+            .select("id,user_id,folder_id,scryfall_id,name,image,set_name,set_code,collector_number,language,foil,quantity,price,created_at");
+
+          if (importError) throw importError;
+          cloudCards = ((importedCards || []) as CollectionCardRow[]).map((row) => mapCloudCard(row, rows));
+          localStorage.removeItem("manaforge-collection");
+          localStorage.removeItem("manaforge-folders");
+          localStorage.removeItem("manaforge-folder-colors");
+        }
+
         if (!cancelled) {
+          setCards(cloudCards);
           setFolders(nextFolders.includes("Non classé") ? nextFolders : ["Toutes", "Non classé", ...nextFolders.filter((folder) => folder !== "Toutes")]);
+          setFolderRows(rows);
           setFolderColors(nextColors);
-          setFolderSyncStatus("Dossiers synchronisés avec ton compte.");
+          setFolderSyncStatus(cloudCards.length > 0 ? "Collection synchronisée avec ton compte." : "Dossiers synchronisés avec ton compte.");
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Erreur de synchronisation des dossiers.");
-          setFolderSyncStatus("Synchronisation des dossiers impossible pour le moment.");
+          setError(err instanceof Error ? err.message : "Erreur de synchronisation de la collection.");
+          setFolderSyncStatus("Synchronisation impossible pour le moment.");
         }
       } finally {
         if (!cancelled) setHasLoaded(true);
@@ -279,12 +361,10 @@ export default function CollectionPage() {
   }, [supabase]);
 
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || userId) return;
     localStorage.setItem("manaforge-collection", JSON.stringify(cards));
-    if (!userId) {
-      localStorage.setItem("manaforge-folders", JSON.stringify(folders));
-      localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
-    }
+    localStorage.setItem("manaforge-folders", JSON.stringify(folders));
+    localStorage.setItem("manaforge-folder-colors", JSON.stringify(folderColors));
   }, [cards, folders, folderColors, hasLoaded, userId]);
 
   useEffect(() => {
@@ -391,13 +471,18 @@ export default function CollectionPage() {
     setScanFolder(cleanFolder);
 
     if (userId) {
-      const { error: insertError } = await supabase.from("folders").insert({ user_id: userId, name: cleanFolder, color: newFolderColor });
+      const { data: insertedFolder, error: insertError } = await supabase
+        .from("folders")
+        .insert({ user_id: userId, name: cleanFolder, color: newFolderColor })
+        .select("id,user_id,name,color,created_at")
+        .single();
       if (insertError) {
         setFolders(previousFolders);
         setFolderColors(previousColors);
         setError(insertError.message);
         return;
       }
+      if (insertedFolder) setFolderRows((current) => [...current, insertedFolder as FolderRow]);
       setFolderSyncStatus("Dossier sauvegardé dans Supabase.");
     }
 
@@ -424,6 +509,24 @@ export default function CollectionPage() {
     if (openedFolder === folder) setOpenedFolder(null);
 
     if (userId) {
+      const folderId = getFolderIdByName(folder);
+      const nonClassedId = getFolderIdByName("Non classé");
+
+      if (folderId) {
+        const { error: moveError } = await supabase
+          .from("collection_cards")
+          .update({ folder_id: nonClassedId })
+          .eq("user_id", userId)
+          .eq("folder_id", folderId);
+        if (moveError) {
+          setCards(previousCards);
+          setFolders(previousFolders);
+          setFolderColors(previousColors);
+          setError(moveError.message);
+          return;
+        }
+      }
+
       const { error: deleteError } = await supabase.from("folders").delete().eq("user_id", userId).eq("name", folder);
       if (deleteError) {
         setCards(previousCards);
@@ -432,6 +535,7 @@ export default function CollectionPage() {
         setError(deleteError.message);
         return;
       }
+      setFolderRows((current) => current.filter((item) => item.name !== folder));
       setFolderSyncStatus("Dossier supprimé de Supabase.");
     }
   }
@@ -451,40 +555,86 @@ export default function CollectionPage() {
     setFolderSyncStatus("Couleur du dossier sauvegardée.");
   }
 
-  function addCardToCollection(card: ScryfallCard, folder: string, amount: number, language = card.lang || "fr", foil = false) {
+  async function addCardToCollection(card: ScryfallCard, folder: string, amount: number, language = card.lang || "fr", foil = false) {
     const cleanFolder = folder === "Toutes" ? "Non classé" : folder;
     const cleanLanguage = language || card.lang || "fr";
-    setCards((current) => {
-      const existing = current.find(
-        (item) =>
-          item.setCode?.toLowerCase() === card.set?.toLowerCase() &&
-          item.collectorNumber === card.collector_number &&
-          (item.folder || "Non classé") === cleanFolder &&
-          (item.language || "fr") === cleanLanguage &&
-          Boolean(item.foil) === foil,
-      );
-      if (existing) {
-        return current.map((item) => (item.id === existing.id ? { ...item, quantity: item.quantity + amount } : item));
+    const price = getCardPrice(card, foil);
+    const image = getCardImage(card);
+
+    const existing = cards.find(
+      (item) =>
+        item.setCode?.toLowerCase() === card.set?.toLowerCase() &&
+        item.collectorNumber === card.collector_number &&
+        (item.folder || "Non classé") === cleanFolder &&
+        (item.language || "fr") === cleanLanguage &&
+        Boolean(item.foil) === foil,
+    );
+
+    if (existing) {
+      const nextQuantity = existing.quantity + amount;
+      setCards((current) => current.map((item) => (item.id === existing.id ? { ...item, quantity: nextQuantity } : item)));
+
+      if (userId && typeof existing.id === "string") {
+        const { error: updateError } = await supabase
+          .from("collection_cards")
+          .update({ quantity: nextQuantity, price })
+          .eq("user_id", userId)
+          .eq("id", existing.id);
+        if (updateError) setError(updateError.message);
       }
-      return [
-        ...current,
-        {
-          id: Date.now(),
-          name: card.name,
-          image: getCardImage(card),
-          quantity: amount,
-          price: getCardPrice(card, foil),
-          typeLine: card.type_line || "",
-          setName: card.set_name || "Extension inconnue",
-          setCode: card.set || "",
-          collectorNumber: card.collector_number || "",
-          rarity: card.rarity || "unknown",
-          folder: cleanFolder,
-          language: cleanLanguage,
-          foil,
-        },
-      ];
-    });
+      return;
+    }
+
+    const optimisticId = Date.now();
+    const optimisticCard: CollectionCard = {
+      id: optimisticId,
+      name: card.name,
+      image,
+      quantity: amount,
+      price,
+      typeLine: card.type_line || "",
+      setName: card.set_name || "Extension inconnue",
+      setCode: card.set || "",
+      collectorNumber: card.collector_number || "",
+      rarity: card.rarity || "unknown",
+      folder: cleanFolder,
+      language: cleanLanguage,
+      foil,
+    };
+
+    setCards((current) => [...current, optimisticCard]);
+
+    if (!userId) return;
+
+    const { data: insertedCard, error: insertError } = await supabase
+      .from("collection_cards")
+      .insert({
+        user_id: userId,
+        folder_id: getFolderIdByName(cleanFolder),
+        scryfall_id: card.id,
+        name: card.name,
+        image: image || null,
+        set_name: card.set_name || null,
+        set_code: card.set || null,
+        collector_number: card.collector_number || null,
+        language: cleanLanguage,
+        foil,
+        quantity: amount,
+        price,
+      })
+      .select("id,user_id,folder_id,scryfall_id,name,image,set_name,set_code,collector_number,language,foil,quantity,price,created_at")
+      .single();
+
+    if (insertError) {
+      setCards((current) => current.filter((item) => item.id !== optimisticId));
+      setError(insertError.message);
+      return;
+    }
+
+    if (insertedCard) {
+      setCards((current) => current.map((item) => (item.id === optimisticId ? mapCloudCard(insertedCard as CollectionCardRow, folderRows) : item)));
+      setFolderSyncStatus("Carte sauvegardée dans Supabase.");
+    }
   }
 
   async function searchPrints() {
@@ -512,7 +662,7 @@ export default function CollectionPage() {
     const selectedPrint = printOptions.find((card) => card.id === selectedPrintId);
     if (!selectedPrint) return setError("Choisis une impression de carte.");
     setIsAdding(true);
-    addCardToCollection(selectedPrint, selectedFolder, quantity, selectedLanguage, selectedFoil);
+    await addCardToCollection(selectedPrint, selectedFolder, quantity, selectedLanguage, selectedFoil);
     setIsAdding(false);
     setCardName("");
     setQuantity(1);
@@ -555,14 +705,38 @@ export default function CollectionPage() {
     }
   }
 
-  function updateQuantity(id: number, amount: number) {
+  async function updateQuantity(id: string | number, amount: number) {
+    const target = cards.find((card) => card.id === id);
+    if (!target) return;
+
+    const nextQuantity = Math.max(0, target.quantity + amount);
     setCards((current) =>
-      current.map((card) => (card.id === id ? { ...card, quantity: Math.max(0, card.quantity + amount) } : card)).filter((card) => card.quantity > 0),
+      current.map((card) => (card.id === id ? { ...card, quantity: nextQuantity } : card)).filter((card) => card.quantity > 0),
     );
+
+    if (!userId || typeof id !== "string") return;
+
+    if (nextQuantity <= 0) {
+      const { error: deleteError } = await supabase.from("collection_cards").delete().eq("user_id", userId).eq("id", id);
+      if (deleteError) setError(deleteError.message);
+      return;
+    }
+
+    const { error: updateError } = await supabase.from("collection_cards").update({ quantity: nextQuantity }).eq("user_id", userId).eq("id", id);
+    if (updateError) setError(updateError.message);
   }
 
-  function deleteCard(id: number) {
+  async function deleteCard(id: string | number) {
+    const previousCards = cards;
     setCards((current) => current.filter((card) => card.id !== id));
+
+    if (!userId || typeof id !== "string") return;
+
+    const { error: deleteError } = await supabase.from("collection_cards").delete().eq("user_id", userId).eq("id", id);
+    if (deleteError) {
+      setCards(previousCards);
+      setError(deleteError.message);
+    }
   }
 
   async function loadTesseract() {
@@ -675,7 +849,7 @@ export default function CollectionPage() {
 
   function confirmScannedCard() {
     if (!scanResult) return;
-    addCardToCollection(scanResult, scanFolder, scanQuantity, scanLanguage, scanFoil);
+    void addCardToCollection(scanResult, scanFolder, scanQuantity, scanLanguage, scanFoil);
     setShowScanModal(false);
     setScanPreview("");
     setScanStatus("");
@@ -695,7 +869,7 @@ export default function CollectionPage() {
 
   function confirmFullsetAdd() {
     if (!pendingFullsetCard) return;
-    addCardToCollection(pendingFullsetCard, pendingFullsetFolder, pendingFullsetQuantity, pendingFullsetLanguage, pendingFullsetFoil);
+    void addCardToCollection(pendingFullsetCard, pendingFullsetFolder, pendingFullsetQuantity, pendingFullsetLanguage, pendingFullsetFoil);
     setPendingFullsetCard(null);
     setPendingFullsetQuantity(1);
   }
@@ -769,9 +943,9 @@ export default function CollectionPage() {
               setSelectedFolder(openedFolder === "__ALL__" ? "Non classé" : openedFolder);
               setShowAddModal(true);
             }}
-            onMinus={(id) => updateQuantity(id, -1)}
-            onPlus={(id) => updateQuantity(id, 1)}
-            onDelete={deleteCard}
+            onMinus={(id) => void updateQuantity(id, -1)}
+            onPlus={(id) => void updateQuantity(id, 1)}
+            onDelete={(id) => void deleteCard(id)}
           />
         )}
       </section>
@@ -1284,9 +1458,9 @@ function FolderView({
   onBack: () => void;
   onScan: () => void;
   onAdd: () => void;
-  onMinus: (id: number) => void;
-  onPlus: (id: number) => void;
-  onDelete: (id: number) => void;
+  onMinus: (id: string | number) => void;
+  onPlus: (id: string | number) => void;
+  onDelete: (id: string | number) => void;
 }) {
   return (
     <>
