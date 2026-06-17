@@ -16,6 +16,19 @@ type DeckCard = {
   price?: number;
 };
 
+type ScryfallCard = {
+  name: string;
+  type_line?: string;
+  oracle_text?: string;
+  cmc?: number;
+  prices?: {
+    eur?: string | null;
+    usd?: string | null;
+    eur_foil?: string | null;
+    usd_foil?: string | null;
+  };
+};
+
 type Deck = {
   id: string | number;
   name: string;
@@ -327,11 +340,14 @@ async function enrichDecklist(decklist: DeckCard[]) {
 
   const data = await response.json();
 
-  const foundCards = Array.isArray(data.data) ? data.data : [];
+  const foundCards: ScryfallCard[] = Array.isArray(data.data)
+    ? data.data
+    : [];
 
   return decklist.map((card) => {
     const found = foundCards.find(
-      (item: any) => item.name?.toLowerCase() === card.name.toLowerCase()
+      (item) =>
+        item.name.toLowerCase() === card.name.toLowerCase()
     );
 
     const price = Number(
@@ -345,13 +361,12 @@ async function enrichDecklist(decklist: DeckCard[]) {
     return {
       ...card,
       price,
-      typeLine: found?.type_line || card.typeLine || "",
-      oracleText: found?.oracle_text || card.oracleText || "",
-      manaValue: Number(found?.cmc || card.manaValue || 0),
+      typeLine: found?.type_line || "",
+      oracleText: found?.oracle_text || "",
+      manaValue: Number(found?.cmc || 0),
     };
   });
 }
-
   async function addDeck() {
     if (!newDeckName.trim() || !newCommander.trim()) return;
 
