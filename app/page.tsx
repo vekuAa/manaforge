@@ -60,6 +60,7 @@ export default function HomePage() {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [collectionCards, setCollectionCards] = useState<CollectionCard[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [authDisplayName, setAuthDisplayName] = useState("");
   const [hasLoaded, setHasLoaded] = useState(false);
   const [homeError, setHomeError] = useState("");
 
@@ -75,6 +76,12 @@ export default function HomePage() {
           router.replace("/login");
           return;
         }
+
+        const fallbackName =
+          authData.user.user_metadata?.display_name ||
+          authData.user.user_metadata?.username ||
+          authData.user.email?.split("@")[0] ||
+          "ManaForger";
 
         const [decksResponse, collectionResponse, profileResponse] = await Promise.all([
           supabase
@@ -117,6 +124,7 @@ export default function HomePage() {
 
           setCollectionCards((collectionResponse.data || []) as CollectionCard[]);
           setProfile((profileResponse.data as Profile) || null);
+          setAuthDisplayName(fallbackName);
         }
       } catch (error) {
         if (!cancelled) {
@@ -170,7 +178,7 @@ export default function HomePage() {
     };
   }, [decks, collectionCards]);
 
-  const firstName = profile?.display_name || profile?.username || "ManaForger";
+  const firstName = profile?.display_name || profile?.username || authDisplayName || "ManaForger";
   const recentCards = collectionCards.slice(0, 8);
   const recentDecks = decks.slice(0, 4);
 
@@ -360,7 +368,7 @@ export default function HomePage() {
             <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">Inspiration Commander</p>
             <h2 className="mt-1 text-2xl font-black">Améliorer tes decks</h2>
             <p className="mt-2 text-sm font-bold leading-relaxed text-white/55">
-              Zone d’inspiration : 
+              Zone d’inspiration : idées de upgrades, combos et tendances. Plus tard, ManaForge pourra la personnaliser selon tes commandants.
             </p>
 
             <div className="mt-5 grid gap-3">
