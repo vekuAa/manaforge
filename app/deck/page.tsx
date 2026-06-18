@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
-import { useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type DeckCard = {
@@ -414,7 +414,7 @@ type ScryfallCard = {
         price,
         typeLine: found?.type_line || card.typeLine || "",
         oracleText: oracleText || card.oracleText || "",
-        manaValue: Number(found?.cmc ?? card.manaValue ?? 0),
+        manaValue: found?.cmc !== undefined ? Number(found.cmc) : card.manaValue,
       };
     });
   }
@@ -811,22 +811,61 @@ type ScryfallCard = {
 }
 
 
-function isLandCard(card: DeckCard) {
-  const type = card.typeLine?.toLowerCase() || "";
-  const name = card.name.toLowerCase();
-  const basicNames = ["plains", "island", "swamp", "mountain", "forest", "wastes", "plaine", "île", "marais", "montagne", "forêt"];
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
 
-  return type.includes("land") || basicNames.some((landName) => name === landName || name.includes(` ${landName}`));
+function isLandCard(card: DeckCard) {
+  const type = normalizeText(card.typeLine || "");
+  const name = normalizeText(card.name || "");
+  const basicNames = [
+    "plains",
+    "island",
+    "swamp",
+    "mountain",
+    "forest",
+    "wastes",
+    "plaine",
+    "ile",
+    "marais",
+    "montagne",
+    "foret",
+    "desert",
+  ];
+
+  if (type.includes("land") || type.includes("terrain")) return true;
+
+  return basicNames.some(
+    (landName) =>
+      name === landName ||
+      name.startsWith(`${landName} `) ||
+      name.endsWith(` ${landName}`),
+  );
+}
+
+function hasReliableManaValue(card: DeckCard) {
+  if (isLandCard(card)) return false;
+  if (card.manaValue === undefined || card.manaValue === null) return false;
+
+  const manaValue = Number(card.manaValue);
+  if (!Number.isFinite(manaValue)) return false;
+
+  // Si la carte n'a aucune donnée Scryfall enrichie, on évite de compter un faux 0.
+  const hasMetadata = Boolean(card.typeLine || card.oracleText || card.image || card.setCode || card.collectorNumber);
+  return hasMetadata || manaValue > 0;
 }
 
 function getDeckCardCategory(card: DeckCard) {
-  const type = card.typeLine?.toLowerCase() || "";
+  const type = normalizeText(card.typeLine || "");
   if (isLandCard(card)) return "Terrains";
   if (type.includes("creature")) return "Créatures";
-  if (type.includes("artifact")) return "Artefacts";
-  if (type.includes("enchantment")) return "Enchantements";
-  if (type.includes("instant")) return "Éphémères";
-  if (type.includes("sorcery")) return "Rituels";
+  if (type.includes("artifact") || type.includes("artefact")) return "Artefacts";
+  if (type.includes("enchantment") || type.includes("enchantement")) return "Enchantements";
+  if (type.includes("instant") || type.includes("ephemere")) return "Éphémères";
+  if (type.includes("sorcery") || type.includes("rituel")) return "Rituels";
   if (type.includes("planeswalker")) return "Planeswalkers";
   return "Autres";
 }
@@ -876,21 +915,24 @@ function DeckDetail({
   const winrate = games > 0 ? Math.round((deck.wins / games) * 100) : 0;
   const totalCards = (deck.decklist || []).reduce((sum, card) => sum + Number(card.quantity || 1), 0);
   const manaCurve = buildManaCurve(deck.decklist);
+  const typeBreakdown = buildTypeBreakdown(deck.decklist);
+  const landBreakdown = buildLandBreakdown(deck.decklist);
+  const deckHealth = getDeckHealth(analysis);
 
   return (
-    <div className="mt-6 space-y-5">
+    <div className="mt-5 space-y-5">
       <div className="sticky top-0 z-30 -mx-4 border-b border-white/10 bg-[#101116]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0 md:py-0">
         <button
           onClick={onClose}
-          className="rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-black text-white/80"
+          className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-black text-white/80 transition hover:bg-white/[0.1]"
         >
           ← Retour aux decks
         </button>
       </div>
 
-      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] to-white/[0.035] p-4 shadow-2xl md:p-5">
-        <div className="grid gap-5 md:grid-cols-[190px_1fr]">
-          <div className="mx-auto w-full max-w-[190px]">
+      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.035))] p-4 shadow-2xl md:p-5">
+        <div className="grid gap-5 md:grid-cols-[210px_1fr]">
+          <div className="mx-auto w-full max-w-[210px]">
             {deck.commanderImage ? (
               <img src={deck.commanderImage} alt={deck.commander} className="aspect-[63/88] w-full rounded-3xl object-cover shadow-2xl ring-1 ring-white/10" />
             ) : (
@@ -904,69 +946,132 @@ function DeckDetail({
               <button onClick={onTogglePrivacy} className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
                 {deck.is_public ? "🌍 Public" : "🔒 Privé"}
               </button>
+              <span className={`rounded-full px-3 py-1 text-xs font-black ${deckHealth.good ? "bg-emerald-400/15 text-emerald-300" : "bg-orange-400/15 text-orange-300"}`}>
+                {deckHealth.label}
+              </span>
             </div>
 
-            <h2 className="mt-3 text-3xl font-black leading-tight md:text-4xl">{deck.name}</h2>
+            <h2 className="mt-3 text-3xl font-black leading-tight md:text-5xl">{deck.name}</h2>
             <p className="mt-1 text-lg font-black text-accent">{deck.commander}</p>
             <p className="mt-2 text-sm font-bold text-muted">{deck.colors} · {totalCards || deck.cards} cartes · {deck.wins}V / {deck.losses}D · {winrate}% WR</p>
 
             <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
               <DeckMiniStat label="Valeur" value={formatCurrency(analysis.totalPrice)} />
-              <DeckMiniStat label="Terrains" value={analysis.lands} helper="cartes détectées" />
-              <DeckMiniStat label="Sorts" value={Math.max(0, totalCards - analysis.lands)} helper="hors terrains" />
-              <DeckMiniStat label="MV moyen" value={analysis.averageManaValue} helper="coût moyen hors terrains" />
+              <DeckMiniStat label="Terrains" value={analysis.lands} helper={`${analysis.landPercent}% du deck`} />
+              <DeckMiniStat label="Sorts" value={analysis.spells} helper="hors terrains" />
+              <DeckMiniStat label="MV moyen" value={analysis.averageManaValue} helper={`${analysis.knownManaCards}/${analysis.spells} sorts analysés`} />
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-2">
-              <button
-                onClick={onAddToCollection}
-                disabled={isAddingToCollection || !deck.decklist?.length}
-                className="rounded-2xl bg-[#f59e0b] px-4 py-4 font-black text-black disabled:opacity-50"
-              >
-                {isAddingToCollection ? "Ajout en cours..." : "Ajouter ce deck à ma collection"}
-              </button>
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <button onClick={onWin} className="rounded-2xl bg-emerald-500/15 px-4 py-4 font-black text-emerald-300 ring-1 ring-emerald-400/20">+ Victoire</button>
+              <button onClick={onLoss} className="rounded-2xl bg-red-500/15 px-4 py-4 font-black text-red-300 ring-1 ring-red-400/20">+ Défaite</button>
               <button
                 onClick={onRefreshMetadata}
                 disabled={isRefreshingDeck || !deck.decklist?.length}
                 className="rounded-2xl border border-white/10 bg-white/[0.075] px-4 py-4 font-black text-white disabled:opacity-50"
               >
-                {isRefreshingDeck ? "Mise à jour..." : "Réparer les infos cartes"}
+                {isRefreshingDeck ? "Mise à jour..." : "Réparer les infos"}
+              </button>
+              <button
+                onClick={onAddToCollection}
+                disabled={isAddingToCollection || !deck.decklist?.length}
+                className="rounded-2xl bg-[#f59e0b] px-4 py-4 font-black text-black disabled:opacity-50"
+              >
+                {isAddingToCollection ? "Ajout..." : "Ajouter collection"}
               </button>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-4">
-        <ProMetric label="Ramp" value={analysis.ramp} target="8-12" status={analysis.ramp >= 8 ? "OK" : "Bas"} />
-        <ProMetric label="Pioche" value={analysis.draw} target="8-12" status={analysis.draw >= 8 ? "OK" : "Bas"} />
-        <ProMetric label="Interactions" value={analysis.removal} target="6-10" status={analysis.removal >= 6 ? "OK" : "Bas"} />
-        <ProMetric label="Wraths" value={analysis.boardWipes} target="2-4" status={analysis.boardWipes >= 2 ? "OK" : "Bas"} />
-      </section>
-
-      <section className="rounded-[2rem] border border-white/10 bg-white/[0.045] p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-xl font-black">Courbe de mana</h3>
-            <p className="text-sm text-muted">Le MV moyen = mana value moyen des sorts, terrains exclus.</p>
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_1fr_0.9fr]">
+        <Panel title="Répartition par type" subtitle={`${totalCards} cartes au total`}>
+          <div className="space-y-3">
+            {typeBreakdown.map((item) => (
+              <BreakdownBar key={item.label} label={item.label} value={item.count} percent={item.percent} />
+            ))}
           </div>
-          <span className="rounded-full bg-black/30 px-3 py-1 text-sm font-black text-accent">{analysis.averageManaValue}</span>
-        </div>
-        <div className="mt-4 grid grid-cols-8 items-end gap-2">
-          {manaCurve.map((item) => (
-            <div key={item.label} className="text-center">
-              <div className="flex h-24 items-end rounded-xl bg-black/25 p-1">
-                <div className="w-full rounded-lg bg-[#f59e0b]" style={{ height: `${Math.max(8, item.percent)}%` }} />
+        </Panel>
+
+        <Panel
+          title="Courbe de mana"
+          subtitle={`Basée sur ${manaCurve.knownCount} sorts enrichis, terrains exclus`}
+          aside={analysis.averageManaValue}
+        >
+          <div className="grid grid-cols-8 items-end gap-2">
+            {manaCurve.buckets.map((item) => (
+              <div key={item.label} className="text-center">
+                <div className="flex h-32 items-end rounded-xl bg-black/25 p-1">
+                  <div className="w-full rounded-lg bg-gradient-to-t from-[#f59e0b] to-[#fbbf24]" style={{ height: item.count === 0 ? "0%" : `${Math.max(8, item.percent)}%` }} />
+                </div>
+                <p className="mt-1 text-[10px] font-black text-white/45">{item.label}</p>
+                <p className="text-xs font-black">{item.count}</p>
               </div>
-              <p className="mt-1 text-[10px] font-black text-white/45">{item.label}</p>
-              <p className="text-xs font-black">{item.count}</p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+          {manaCurve.unknownCount > 0 && (
+            <p className="mt-3 rounded-2xl bg-orange-400/10 p-3 text-xs font-bold text-orange-200">
+              {manaCurve.unknownCount} sort(s) sans MV fiable ignoré(s). Clique sur “Réparer les infos” pour compléter les données Scryfall.
+            </p>
+          )}
+        </Panel>
+
+        <Panel title="Couleurs du deck" subtitle="Identité du commandant">
+          <CommanderColors colors={deck.colors} />
+          <div className="mt-5 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
+            <p className="text-sm font-black text-sky-200">MV moyen</p>
+            <p className="mt-2 text-sm font-bold leading-relaxed text-white/65">
+              Le MV moyen ignore les terrains et les cartes non enrichies. Un deck Commander stable tourne souvent autour de 2,5 à 3,5 selon le plan de jeu.
+            </p>
+          </div>
+        </Panel>
       </section>
 
+      <section className="grid gap-4 xl:grid-cols-[1fr_0.95fr]">
+        <Panel title="Statistiques clés" subtitle="Repères Commander classiques">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <ProMetric label="Ramp" value={analysis.ramp} target="8-12" status={analysis.ramp >= 8 ? "OK" : "Bas"} />
+            <ProMetric label="Pioche" value={analysis.draw} target="8-12" status={analysis.draw >= 8 ? "OK" : "Bas"} />
+            <ProMetric label="Interactions" value={analysis.removal} target="6-10" status={analysis.removal >= 6 ? "OK" : "Bas"} />
+            <ProMetric label="Wraths" value={analysis.boardWipes} target="2-4" status={analysis.boardWipes >= 2 ? "OK" : "Bas"} />
+          </div>
+        </Panel>
+
+        <Panel title="Conseils ManaForge" subtitle="Analyse automatique du deck">
+          {analysis.recommendations.length > 0 ? (
+            <div className="space-y-2">
+              {analysis.recommendations.map((recommendation) => (
+                <p key={recommendation} className="rounded-2xl border border-white/10 bg-black/25 p-3 text-sm font-bold text-white/70">
+                  {recommendation}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 font-black text-emerald-300">
+              ✅ Deck équilibré sur les repères de base.
+            </p>
+          )}
+        </Panel>
+      </section>
+
+      {landBreakdown.length > 0 && (
+        <Panel title="Répartition des terrains" subtitle={`${analysis.lands} terrains détectés`}>
+          <div className="grid gap-3 md:grid-cols-5">
+            {landBreakdown.map((item) => (
+              <div key={item.label} className="rounded-2xl bg-black/25 p-3">
+                <p className="font-black">{item.icon} {item.label}</p>
+                <p className="mt-1 text-sm font-bold text-white/50">{item.count} cartes</p>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-[#f59e0b]" style={{ width: `${item.percent}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
       <section className="rounded-[2rem] border border-white/10 bg-white/[0.045] p-4">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-xl font-black">Decklist</h3>
             <p className="text-sm text-muted">Triée par type. Les compteurs utilisent les quantités réelles.</p>
@@ -986,7 +1091,7 @@ function DeckDetail({
           ))}
         </div>
 
-        <div className={viewMode === "grid" ? "mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5" : "mt-4 grid gap-3"}>
+        <div className={viewMode === "grid" ? "mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-7" : "mt-4 grid gap-3 md:grid-cols-2"}>
           {visibleCards.length === 0 ? (
             <p className="col-span-full rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center text-muted">Aucune carte dans cette catégorie.</p>
           ) : (
@@ -1001,18 +1106,79 @@ function DeckDetail({
         </div>
       </section>
 
-      <div className="grid grid-cols-2 gap-3">
-        <button onClick={onWin} className="rounded-2xl bg-green-500/20 px-4 py-4 font-black text-green-300">+ Victoire</button>
-        <button onClick={onLoss} className="rounded-2xl bg-red-500/20 px-4 py-4 font-black text-red-300">+ Défaite</button>
+      <button onClick={onDelete} className="w-full rounded-2xl bg-red-500/10 px-4 py-4 font-black text-red-300 ring-1 ring-red-400/20">Supprimer le deck</button>
+    </div>
+  );
+}
+
+function Panel({ title, subtitle, aside, children }: { title: string; subtitle?: string; aside?: string | number; children: ReactNode }) {
+  return (
+    <section className="rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.065),rgba(255,255,255,0.025))] p-4 shadow-xl">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-black uppercase tracking-tight">{title}</h3>
+          {subtitle && <p className="mt-1 text-sm font-bold text-white/45">{subtitle}</p>}
+        </div>
+        {aside !== undefined && (
+          <span className="rounded-full bg-black/35 px-3 py-1 text-sm font-black text-accent">{aside}</span>
+        )}
       </div>
-      <button onClick={onDelete} className="w-full rounded-2xl bg-red-500/10 px-4 py-4 font-black text-red-300">Supprimer le deck</button>
+      {children}
+    </section>
+  );
+}
+
+function CommanderColors({ colors }: { colors: string }) {
+  const items = [
+    { key: "⚪", label: "Blanc" },
+    { key: "🔵", label: "Bleu" },
+    { key: "⚫", label: "Noir" },
+    { key: "🔴", label: "Rouge" },
+    { key: "🟢", label: "Vert" },
+  ];
+
+  const activeColors = items.filter((item) => colors.includes(item.key));
+
+  if (activeColors.length === 0) {
+    return <p className="rounded-2xl bg-black/25 p-4 font-bold text-white/55">Deck incolore ou identité couleur non récupérée.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((item) => {
+        const active = activeColors.some((color) => color.key === item.key);
+        const width = active ? 100 / activeColors.length : 0;
+        return (
+          <div key={item.key} className="flex items-center gap-3">
+            <span className="w-16 font-black">{item.key} {item.label}</span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-[#f59e0b]" style={{ width: `${width}%`, opacity: active ? 1 : 0.2 }} />
+            </div>
+            <span className="w-10 text-right text-xs font-black text-white/45">{active ? `${Math.round(width)}%` : "0%"}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BreakdownBar({ label, value, percent }: { label: string; value: number; percent: number }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-sm font-bold">
+        <span>{label}</span>
+        <span className="text-white/45">{percent}% ({value})</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-gradient-to-r from-[#f59e0b] to-[#fbbf24]" style={{ width: `${percent}%` }} />
+      </div>
     </div>
   );
 }
 
 function DeckMiniStat({ label, value, helper }: { label: string; value: number | string; helper?: string }) {
   return (
-    <div className="rounded-2xl bg-black/25 p-4 text-center">
+    <div className="rounded-2xl bg-black/25 p-4 text-center ring-1 ring-white/5">
       <p className="text-2xl font-black text-accent">{value}</p>
       <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted">{label}</p>
       {helper && <p className="mt-1 text-[10px] font-bold text-white/35">{helper}</p>}
@@ -1040,7 +1206,7 @@ function ViewToggle({ viewMode, setViewMode }: { viewMode: "grid" | "list"; setV
 
 function DeckCardTile({ card }: { card: DeckCard }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.055] p-1.5">
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.055] p-1.5 transition hover:bg-white/[0.08]">
       {card.image ? (
         <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" />
       ) : (
@@ -1062,7 +1228,7 @@ function DeckCardRow({ card }: { card: DeckCard }) {
       )}
       <div className="min-w-0 flex-1">
         <p className="truncate font-black">{card.name}</p>
-        <p className="text-xs text-white/60">{getDeckCardCategory(card)} · MV {card.manaValue ?? "?"}</p>
+        <p className="text-xs text-white/60">{getDeckCardCategory(card)} · MV {hasReliableManaValue(card) ? card.manaValue : "non enrichi"}</p>
         <p className="mt-1 text-sm font-black">{formatCurrency(Number(card.price || 0) * Number(card.quantity || 1))} · x{card.quantity}</p>
       </div>
     </div>
@@ -1072,7 +1238,7 @@ function DeckCardRow({ card }: { card: DeckCard }) {
 function ProMetric({ label, value, target, status }: { label: string; value: number; target: string; status: string }) {
   const good = status === "OK";
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
       <div className="flex items-center justify-between gap-2">
         <p className="font-black">{label}</p>
         <span className={`rounded-full px-2 py-1 text-[10px] font-black ${good ? "bg-emerald-400/15 text-emerald-300" : "bg-orange-400/15 text-orange-300"}`}>{status}</span>
@@ -1095,31 +1261,90 @@ function buildManaCurve(decklist?: DeckCard[]) {
     { label: "7+", count: 0 },
   ];
 
+  let unknownCount = 0;
+  let knownCount = 0;
+
   (decklist || []).forEach((card) => {
     if (isLandCard(card)) return;
+
     const quantity = Number(card.quantity || 1);
-    const manaValue = Math.max(0, Math.floor(Number(card.manaValue || 0)));
+
+    if (!hasReliableManaValue(card)) {
+      unknownCount += quantity;
+      return;
+    }
+
+    const manaValue = Math.max(0, Math.floor(Number(card.manaValue)));
     const index = manaValue >= 7 ? 7 : manaValue;
     buckets[index].count += quantity;
+    knownCount += quantity;
   });
 
   const max = Math.max(1, ...buckets.map((item) => item.count));
-  return buckets.map((item) => ({ ...item, percent: Math.round((item.count / max) * 100) }));
+  return {
+    buckets: buckets.map((item) => ({ ...item, percent: Math.round((item.count / max) * 100) })),
+    unknownCount,
+    knownCount,
+  };
 }
 
-function AnalysisBox({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-xl bg-white/5 p-3">
-      <p className="text-muted">{label}</p>
-      <p className="text-xl font-black">{value}</p>
-    </div>
-  );
+function buildTypeBreakdown(decklist?: DeckCard[]) {
+  const total = (decklist || []).reduce((sum, card) => sum + Number(card.quantity || 1), 0);
+  const labels = ["Créatures", "Artefacts", "Enchantements", "Éphémères", "Rituels", "Planeswalkers", "Terrains", "Autres"];
+
+  return labels
+    .map((label) => {
+      const count = getCategoryCount(decklist, label);
+      return {
+        label,
+        count,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      };
+    })
+    .filter((item) => item.count > 0);
+}
+
+function buildLandBreakdown(decklist?: DeckCard[]) {
+  const lands = (decklist || []).filter(isLandCard);
+  const total = lands.reduce((sum, card) => sum + Number(card.quantity || 1), 0);
+  const landGroups = [
+    { label: "Plaines", icon: "⚪", keywords: ["plains", "plaine"] },
+    { label: "Îles", icon: "🔵", keywords: ["island", "ile"] },
+    { label: "Marais", icon: "⚫", keywords: ["swamp", "marais"] },
+    { label: "Montagnes", icon: "🔴", keywords: ["mountain", "montagne"] },
+    { label: "Forêts", icon: "🟢", keywords: ["forest", "foret"] },
+  ];
+
+  return landGroups
+    .map((group) => {
+      const count = lands.reduce((sum, card) => {
+        const name = normalizeText(card.name);
+        const matches = group.keywords.some((keyword) => name.includes(keyword));
+        return matches ? sum + Number(card.quantity || 1) : sum;
+      }, 0);
+
+      return {
+        ...group,
+        count,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      };
+    })
+    .filter((item) => item.count > 0);
+}
+
+function getDeckHealth(analysis: ReturnType<typeof analyzeDeck>) {
+  const warnings = analysis.recommendations.length;
+  if (warnings === 0) return { label: "Deck équilibré", good: true };
+  if (warnings <= 2) return { label: "À ajuster", good: false };
+  return { label: "À retravailler", good: false };
 }
 
 function analyzeDeck(decklist?: DeckCard[]) {
   if (!decklist || decklist.length === 0) {
     return {
       lands: 0,
+      landPercent: 0,
+      spells: 0,
       creatures: 0,
       artifacts: 0,
       enchantments: 0,
@@ -1131,54 +1356,89 @@ function analyzeDeck(decklist?: DeckCard[]) {
       removal: 0,
       boardWipes: 0,
       averageManaValue: 0,
+      knownManaCards: 0,
+      unknownManaCards: 0,
       totalPrice: 0,
       recommendations: [] as string[],
     };
   }
 
   let totalManaValue = 0;
-  let nonLandCount = 0;
+  let knownManaCards = 0;
+  let unknownManaCards = 0;
+
+  const totalCards = decklist.reduce((sum, card) => sum + Number(card.quantity || 1), 0);
 
   const analysis = decklist.reduce(
     (acc, card) => {
-      const type = card.typeLine?.toLowerCase() || "";
-      const text = card.oracleText?.toLowerCase() || "";
-      const name = card.name.toLowerCase();
-      const quantity = card.quantity || 1;
+      const type = normalizeText(card.typeLine || "");
+      const text = normalizeText(card.oracleText || "");
+      const name = normalizeText(card.name || "");
+      const quantity = Number(card.quantity || 1);
       const isLand = isLandCard(card);
 
       if (isLand) acc.lands += quantity;
       if (type.includes("creature")) acc.creatures += quantity;
-      if (type.includes("artifact")) acc.artifacts += quantity;
-      if (type.includes("enchantment")) acc.enchantments += quantity;
-      if (type.includes("instant")) acc.instants += quantity;
-      if (type.includes("sorcery")) acc.sorceries += quantity;
+      if (type.includes("artifact") || type.includes("artefact")) acc.artifacts += quantity;
+      if (type.includes("enchantment") || type.includes("enchantement")) acc.enchantments += quantity;
+      if (type.includes("instant") || type.includes("ephemere")) acc.instants += quantity;
+      if (type.includes("sorcery") || type.includes("rituel")) acc.sorceries += quantity;
       if (type.includes("planeswalker")) acc.planeswalkers += quantity;
 
       if (!isLand) {
-        totalManaValue += (card.manaValue || 0) * quantity;
-        nonLandCount += quantity;
+        if (hasReliableManaValue(card)) {
+          totalManaValue += Number(card.manaValue) * quantity;
+          knownManaCards += quantity;
+        } else {
+          unknownManaCards += quantity;
+        }
       }
 
       const isRamp =
         !isLand &&
         (text.includes("add ") ||
+          text.includes("ajoutez ") ||
           text.includes("search your library for a basic land") ||
           text.includes("search your library for a land") ||
+          text.includes("cherchez dans votre bibliotheque une carte de terrain") ||
           name.includes("sol ring") ||
           name.includes("arcane signet") ||
           name.includes("signet") ||
           name.includes("talisman"));
 
-      const isDraw = text.includes("draw a card") || text.includes("draw cards") || text.includes("draw two cards") || text.includes("draw three cards");
-      const isRemoval = text.includes("destroy target") || text.includes("exile target") || text.includes("return target") || text.includes("counter target");
-      const isBoardWipe = text.includes("destroy all") || text.includes("exile all") || text.includes("each creature") || text.includes("all creatures get");
+      const isDraw =
+        text.includes("draw a card") ||
+        text.includes("draw cards") ||
+        text.includes("draw two cards") ||
+        text.includes("draw three cards") ||
+        text.includes("piochez une carte") ||
+        text.includes("piochez deux cartes") ||
+        text.includes("piochez trois cartes");
+
+      const isRemoval =
+        text.includes("destroy target") ||
+        text.includes("exile target") ||
+        text.includes("return target") ||
+        text.includes("counter target") ||
+        text.includes("detruisez la cible") ||
+        text.includes("exilez la cible") ||
+        text.includes("renvoyez la cible") ||
+        text.includes("contrez le sort cible");
+
+      const isBoardWipe =
+        text.includes("destroy all") ||
+        text.includes("exile all") ||
+        text.includes("each creature") ||
+        text.includes("all creatures get") ||
+        text.includes("detruisez toutes") ||
+        text.includes("exilez toutes") ||
+        text.includes("chaque creature");
 
       if (isRamp) acc.ramp += quantity;
       if (isDraw) acc.draw += quantity;
       if (isRemoval) acc.removal += quantity;
       if (isBoardWipe) acc.boardWipes += quantity;
-      acc.totalPrice += (card.price || 0) * quantity;
+      acc.totalPrice += Number(card.price || 0) * quantity;
       return acc;
     },
     {
@@ -1197,7 +1457,9 @@ function analyzeDeck(decklist?: DeckCard[]) {
     },
   );
 
-  const averageManaValue = nonLandCount > 0 ? Math.round((totalManaValue / nonLandCount) * 10) / 10 : 0;
+  const spells = Math.max(0, totalCards - analysis.lands);
+  const landPercent = totalCards > 0 ? Math.round((analysis.lands / totalCards) * 100) : 0;
+  const averageManaValue = knownManaCards > 0 ? Math.round((totalManaValue / knownManaCards) * 10) / 10 : 0;
   const recommendations: string[] = [];
 
   if (analysis.lands < 34) recommendations.push("Terrains bas : beaucoup de decks Commander jouent autour de 34 à 38 terrains.");
@@ -1207,10 +1469,15 @@ function analyzeDeck(decklist?: DeckCard[]) {
   if (analysis.removal < 6) recommendations.push("Interactions basses : vise souvent 6 à 10 removals ciblés.");
   if (analysis.boardWipes < 2) recommendations.push("Wraths basses : 2 à 4 effets de nettoyage donnent plus de sécurité.");
   if (averageManaValue > 3.6) recommendations.push("Courbe haute : le deck peut être lent sans beaucoup de ramp.");
+  if (unknownManaCards > 0) recommendations.push(`${unknownManaCards} sort(s) n’ont pas encore de MV fiable. Lance “Réparer les infos” pour fiabiliser l’analyse.`);
 
   return {
     ...analysis,
+    landPercent,
+    spells,
     averageManaValue,
+    knownManaCards,
+    unknownManaCards,
     totalPrice: Math.round(analysis.totalPrice * 100) / 100,
     recommendations,
   };
