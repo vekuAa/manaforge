@@ -159,6 +159,7 @@ export default function CollectionPage() {
   const [hasLoaded, setHasLoaded] = useState(false);
 
   const [openedFolder, setOpenedFolder] = useState<string | null>(null);
+  const [selectedCard, setSelectedCard] = useState<CollectionCard | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
   const [setFilter, setSetFilter] = useState("Toutes");
@@ -962,6 +963,7 @@ export default function CollectionPage() {
             onMinus={(id) => void updateQuantity(id, -1)}
             onPlus={(id) => void updateQuantity(id, 1)}
             onDelete={(id) => void deleteCard(id)}
+            onOpenCard={setSelectedCard}
           />
         )}
       </section>
@@ -1059,6 +1061,13 @@ export default function CollectionPage() {
           onFile={(file) => void scanImage(file)}
           onConfirm={confirmScannedCard}
           onClose={() => setShowScanModal(false)}
+        />
+      )}
+
+      {selectedCard && (
+        <CardDetailModal
+          card={selectedCard}
+          onClose={() => setSelectedCard(null)}
         />
       )}
 
@@ -1459,6 +1468,7 @@ function FolderView({
   onMinus,
   onPlus,
   onDelete,
+  onOpenCard,
 }: {
   folder: string;
   summary?: FolderSummary;
@@ -1477,6 +1487,7 @@ function FolderView({
   onMinus: (id: string | number) => void;
   onPlus: (id: string | number) => void;
   onDelete: (id: string | number) => void;
+  onOpenCard: (card: CollectionCard) => void;
 }) {
   return (
     <>
@@ -1524,9 +1535,9 @@ function FolderView({
         {cards.length === 0 ? (
           <div className="col-span-full rounded-2xl border border-white/10 bg-white/[0.05] p-6 text-center text-white/60">Ce dossier est vide.</div>
         ) : cards.map((card) => viewMode === "grid" ? (
-          <CardTile key={card.id} card={card} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
+          <CardTile key={card.id} card={card} onOpen={() => onOpenCard(card)} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
         ) : (
-          <CardRow key={card.id} card={card} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
+          <CardRow key={card.id} card={card} onOpen={() => onOpenCard(card)} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
         ))}
       </div>
     </>
@@ -1542,16 +1553,35 @@ function ViewToggle({ viewMode, setViewMode }: { viewMode: "grid" | "list"; setV
   );
 }
 
-function CardTile({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; onMinus: () => void; onPlus: () => void; onDelete: () => void }) {
+function CardTile({
+  card,
+  onOpen,
+  onMinus,
+  onPlus,
+  onDelete,
+}: {
+  card: CollectionCard;
+  onOpen: () => void;
+  onMinus: () => void;
+  onPlus: () => void;
+  onDelete: () => void;
+}) {
   return (
     <div className="group relative overflow-hidden rounded-xl bg-white/[0.05] p-1.5">
-      {card.image ? <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" /> : <div className="aspect-[63/88] rounded-lg bg-black/30" />}
-      <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
-      <p className="text-[10px] text-white/60">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
-      <div className="mt-1 flex flex-wrap gap-1 text-[9px] font-black uppercase tracking-wide">
-        <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/70">{(card.language || "fr").toUpperCase()}</span>
-        {card.foil && <span className="rounded bg-yellow-400/20 px-1.5 py-0.5 text-yellow-200">FOIL</span>}
-      </div>
+      <button type="button" onClick={onOpen} className="w-full text-left transition active:scale-[0.98]">
+        {card.image ? (
+          <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover shadow-lg" />
+        ) : (
+          <div className="flex aspect-[63/88] items-center justify-center rounded-lg bg-black/30 text-3xl">🎴</div>
+        )}
+        <p className="mt-1 truncate text-[11px] font-bold">{card.name}</p>
+        <p className="text-[10px] text-white/60">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
+        <div className="mt-1 flex flex-wrap gap-1 text-[9px] font-black uppercase tracking-wide">
+          <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/70">{(card.language || "fr").toUpperCase()}</span>
+          {card.foil && <span className="rounded bg-yellow-400/20 px-1.5 py-0.5 text-yellow-200">FOIL</span>}
+        </div>
+      </button>
+
       <div className="mt-2 grid grid-cols-3 gap-1">
         <button onClick={onMinus} className="rounded-lg bg-black/70 py-1 text-sm font-black">−</button>
         <button onClick={onPlus} className="rounded-lg bg-[#f59e0b] py-1 text-sm font-black text-black">+</button>
@@ -1561,24 +1591,102 @@ function CardTile({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; o
   );
 }
 
-function CardRow({ card, onMinus, onPlus, onDelete }: { card: CollectionCard; onMinus: () => void; onPlus: () => void; onDelete: () => void }) {
+function CardRow({
+  card,
+  onOpen,
+  onMinus,
+  onPlus,
+  onDelete,
+}: {
+  card: CollectionCard;
+  onOpen: () => void;
+  onMinus: () => void;
+  onPlus: () => void;
+  onDelete: () => void;
+}) {
   return (
     <div className="flex w-full min-w-0 gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
-      {card.image ? <img src={card.image} alt={card.name} className="h-20 w-14 rounded-lg object-cover" /> : <div className="h-20 w-14 rounded-lg bg-black/30" />}
+      <button type="button" onClick={onOpen} className="shrink-0 transition active:scale-95">
+        {card.image ? <img src={card.image} alt={card.name} className="h-20 w-14 rounded-lg object-cover" /> : <div className="flex h-20 w-14 items-center justify-center rounded-lg bg-black/30 text-2xl">🎴</div>}
+      </button>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-black">{card.name}</p>
-        <p className="text-xs text-white/60">{card.setCode?.toUpperCase()} #{card.collectorNumber}</p>
-        <div className="mt-1 flex flex-wrap gap-1 text-[10px] font-black uppercase tracking-wide">
-          <span className="rounded bg-white/10 px-2 py-0.5 text-white/70">{getLanguageLabel(card.language)}</span>
-          {card.foil && <span className="rounded bg-yellow-400/20 px-2 py-0.5 text-yellow-200">FOIL</span>}
-        </div>
-        <p className="mt-1 text-sm font-black">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
+        <button type="button" onClick={onOpen} className="block w-full text-left">
+          <p className="truncate font-black">{card.name}</p>
+          <p className="text-xs text-white/60">{card.setCode?.toUpperCase()} #{card.collectorNumber}</p>
+          <div className="mt-1 flex flex-wrap gap-1 text-[10px] font-black uppercase tracking-wide">
+            <span className="rounded bg-white/10 px-2 py-0.5 text-white/70">{getLanguageLabel(card.language)}</span>
+            {card.foil && <span className="rounded bg-yellow-400/20 px-2 py-0.5 text-yellow-200">FOIL</span>}
+          </div>
+          <p className="mt-1 text-sm font-black">{formatCurrency(card.price * card.quantity, 2)} · x{card.quantity}</p>
+        </button>
         <div className="mt-2 flex gap-2">
           <button onClick={onMinus} className="rounded-lg bg-black/30 px-3 py-1">−</button>
           <button onClick={onPlus} className="rounded-lg bg-[#f59e0b] px-3 py-1 text-black">+</button>
           <button onClick={() => { if (window.confirm(`Supprimer "${card.name}" de la collection ?`)) onDelete(); }} className="rounded-lg bg-red-500/20 px-3 py-1 text-red-200">×</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function CardDetailModal({ card, onClose }: { card: CollectionCard; onClose: () => void }) {
+  const totalPrice = Number(card.price || 0) * Number(card.quantity || 1);
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/85 px-4 py-5 backdrop-blur-md">
+      <div className="mx-auto flex h-full max-w-md flex-col">
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-2xl font-black text-white ring-1 ring-white/10"
+            aria-label="Fermer"
+          >
+            ×
+          </button>
+
+          <div className="rounded-full bg-[#f59e0b] px-4 py-2 text-xs font-black text-black">x{card.quantity}</div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-[2rem] border border-white/10 bg-[#151515] p-4 shadow-2xl">
+          {card.image ? (
+            <img
+              src={card.image}
+              alt={card.name}
+              className="mx-auto max-h-[58vh] rounded-2xl object-contain shadow-2xl"
+            />
+          ) : (
+            <div className="flex aspect-[63/88] items-center justify-center rounded-2xl bg-black/30 text-5xl">🎴</div>
+          )}
+
+          <div className="mt-5">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">Carte collection</p>
+            <h2 className="mt-2 text-2xl font-black leading-tight text-white">{card.name}</h2>
+
+            {card.typeLine && <p className="mt-2 text-sm font-bold text-white/55">{card.typeLine}</p>}
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <InfoBox label="Prix unité" value={formatCurrency(card.price || 0, 2)} />
+              <InfoBox label="Total" value={formatCurrency(totalPrice, 2)} />
+              <InfoBox label="Extension" value={card.setName || card.setCode?.toUpperCase() || "N/A"} />
+              <InfoBox label="Numéro" value={card.collectorNumber || "N/A"} />
+              <InfoBox label="Rareté" value={card.rarity || "N/A"} />
+              <InfoBox label="Langue" value={getLanguageLabel(card.language)} />
+              <InfoBox label="Dossier" value={card.folder || "Non classé"} />
+              <InfoBox label="Foil" value={card.foil ? "Oui" : "Non"} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-black/30 p-3">
+      <p className="text-[10px] font-black uppercase tracking-wider text-white/35">{label}</p>
+      <p className="mt-1 truncate text-sm font-black text-white">{value}</p>
     </div>
   );
 }
