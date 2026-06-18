@@ -11,6 +11,14 @@ type Profile = {
   created_at?: string | null;
 };
 
+type CommunityCard = {
+  id: string;
+  name: string;
+  image: string | null;
+  quantity: number | null;
+  price: number | string | null;
+};
+
 type CommunityProfile = Profile & {
   cardCount: number;
   uniqueCount: number;
@@ -64,7 +72,9 @@ export default async function CommunityPage() {
           .select("id,name,image,quantity,price")
           .eq("user_id", profile.id)
           .order("created_at", { ascending: false })
-          .limit(120),
+          .range(0, 9999)
+          .returns<CommunityCard[]>(),
+
         supabase
           .from("decks")
           .select("id")
@@ -73,7 +83,12 @@ export default async function CommunityPage() {
       ]);
 
       const cards = cardsResponse.data || [];
-      const cardCount = cards.reduce((sum, card) => sum + Number(card.quantity || 1), 0);
+
+      const cardCount = cards.reduce(
+        (sum, card) => sum + Number(card.quantity || 1),
+        0,
+      );
+
       const collectionValue = cards.reduce(
         (sum, card) => sum + Number(card.quantity || 1) * Number(card.price || 0),
         0,
@@ -88,7 +103,11 @@ export default async function CommunityPage() {
         previewCards: cards
           .filter((card) => card.image)
           .slice(0, 4)
-          .map((card) => ({ id: String(card.id), name: String(card.name), image: card.image })),
+          .map((card) => ({
+            id: String(card.id),
+            name: String(card.name),
+            image: card.image,
+          })),
       };
     }),
   );
@@ -96,20 +115,30 @@ export default async function CommunityPage() {
   const totalPlayers = enrichedProfiles.length;
   const totalCards = enrichedProfiles.reduce((sum, profile) => sum + profile.cardCount, 0);
   const totalDecks = enrichedProfiles.reduce((sum, profile) => sum + profile.deckCount, 0);
-  const topCollectors = [...enrichedProfiles].sort((a, b) => b.cardCount - a.cardCount).slice(0, 3);
+  const topCollectors = [...enrichedProfiles]
+    .sort((a, b) => b.cardCount - a.cardCount)
+    .slice(0, 3);
 
   return (
     <main className="min-h-screen bg-[#101116] px-4 py-8 text-white">
       <section className="mx-auto max-w-6xl pb-28">
-        <Link href="/" className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-xl font-black transition hover:bg-white/[0.1]">
+        <Link
+          href="/"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-xl font-black transition hover:bg-white/[0.1]"
+        >
           ←
         </Link>
 
         <header className="mt-8 overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.2),transparent_38%),linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.035))] p-6 shadow-2xl">
-          <p className="text-xs font-black uppercase tracking-[0.26em] text-[#f59e0b]">ManaForge social</p>
+          <p className="text-xs font-black uppercase tracking-[0.26em] text-[#f59e0b]">
+            ManaForge social
+          </p>
+
           <div className="mt-3 grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
             <div>
-              <h1 className="text-4xl font-black leading-tight md:text-5xl">Communauté</h1>
+              <h1 className="text-4xl font-black leading-tight md:text-5xl">
+                Communauté
+              </h1>
               <p className="mt-3 max-w-2xl text-sm font-bold leading-relaxed text-white/55">
                 Découvre les profils publics, les collections visibles et les decks partagés par les joueurs ManaForge.
               </p>
@@ -118,7 +147,7 @@ export default async function CommunityPage() {
             <div className="grid grid-cols-3 gap-3">
               <CommunityStat label="Joueurs" value={totalPlayers} />
               <CommunityStat label="Cartes" value={totalCards} />
-              <CommunityStat label="Decks" value={totalDecks} />
+              <CommunityStat label="Decks publics" value={totalDecks} />
             </div>
           </div>
         </header>
@@ -127,22 +156,34 @@ export default async function CommunityPage() {
           <section className="mt-6 rounded-[2rem] border border-white/10 bg-white/[0.055] p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">Top collectionneurs</p>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">
+                  Top collectionneurs
+                </p>
                 <h2 className="mt-1 text-2xl font-black">Les profils actifs</h2>
               </div>
-              <span className="rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white/60">Public</span>
+              <span className="rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white/60">
+                Public
+              </span>
             </div>
 
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               {topCollectors.map((profile, index) => (
-                <Link key={profile.id} href={`/u/${profile.username}`} className="group overflow-hidden rounded-[1.6rem] border border-white/10 bg-black/25 p-4 transition hover:bg-white/[0.08]">
+                <Link
+                  key={profile.id}
+                  href={`/u/${profile.username}`}
+                  className="group overflow-hidden rounded-[1.6rem] border border-white/10 bg-black/25 p-4 transition hover:bg-white/[0.08]"
+                >
                   <div className="flex items-center gap-3">
                     <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f59e0b] text-xl font-black text-black shadow-xl">
                       {index + 1}
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-lg font-black">{profile.display_name || profile.username}</p>
-                      <p className="truncate text-sm font-bold text-white/45">@{profile.username}</p>
+                      <p className="truncate text-lg font-black">
+                        {profile.display_name || profile.username}
+                      </p>
+                      <p className="truncate text-sm font-bold text-white/45">
+                        @{profile.username}
+                      </p>
                     </div>
                   </div>
 
@@ -158,20 +199,28 @@ export default async function CommunityPage() {
         )}
 
         <section className="mt-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-black">Profils publics</h2>
-              <p className="mt-1 text-sm font-bold text-white/45">Cartes récentes, decks publics et collection visible.</p>
-            </div>
+          <div>
+            <h2 className="text-2xl font-black">Profils publics</h2>
+            <p className="mt-1 text-sm font-bold text-white/45">
+              Stats calculées sur toute la collection. Aperçu limité aux dernières cartes.
+            </p>
           </div>
 
           {enrichedProfiles.length > 0 ? (
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {enrichedProfiles.map((profile) => (
-                <Link key={profile.id} href={`/u/${profile.username}`} className="group overflow-hidden rounded-[1.8rem] border border-white/10 bg-white/[0.055] p-4 shadow-xl transition hover:bg-white/[0.08]">
+                <Link
+                  key={profile.id}
+                  href={`/u/${profile.username}`}
+                  className="group overflow-hidden rounded-[1.8rem] border border-white/10 bg-white/[0.055] p-4 shadow-xl transition hover:bg-white/[0.08]"
+                >
                   <div className="flex items-center gap-3">
                     {profile.avatar_url ? (
-                      <img src={profile.avatar_url} alt={profile.display_name || profile.username || "Profil"} className="h-14 w-14 rounded-2xl object-cover" />
+                      <img
+                        src={profile.avatar_url}
+                        alt={profile.display_name || profile.username || "Profil"}
+                        className="h-14 w-14 rounded-2xl object-cover"
+                      />
                     ) : (
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f59e0b] text-xl font-black text-black">
                         {getInitial(profile)}
@@ -179,11 +228,17 @@ export default async function CommunityPage() {
                     )}
 
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-lg font-black">{profile.display_name || profile.username}</p>
-                      <p className="truncate text-sm font-bold text-white/45">@{profile.username}</p>
+                      <p className="truncate text-lg font-black">
+                        {profile.display_name || profile.username}
+                      </p>
+                      <p className="truncate text-sm font-bold text-white/45">
+                        @{profile.username}
+                      </p>
                     </div>
 
-                    <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-black text-[#f59e0b]">Voir</span>
+                    <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-black text-[#f59e0b]">
+                      Voir
+                    </span>
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -197,9 +252,15 @@ export default async function CommunityPage() {
                       profile.previewCards.map((card) => (
                         <div key={card.id} className="rounded-xl bg-black/25 p-1">
                           {card.image ? (
-                            <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover" />
+                            <img
+                              src={card.image}
+                              alt={card.name}
+                              className="aspect-[63/88] w-full rounded-lg object-cover"
+                            />
                           ) : (
-                            <div className="flex aspect-[63/88] items-center justify-center rounded-lg bg-white/10 text-xl">🎴</div>
+                            <div className="flex aspect-[63/88] items-center justify-center rounded-lg bg-white/10 text-xl">
+                              🎴
+                            </div>
                           )}
                         </div>
                       ))
@@ -216,7 +277,9 @@ export default async function CommunityPage() {
             <div className="mt-5 rounded-[2rem] border border-white/10 bg-white/[0.055] p-8 text-center">
               <p className="text-5xl">👥</p>
               <h2 className="mt-4 text-2xl font-black">Aucun profil public</h2>
-              <p className="mt-2 font-bold text-white/45">Les profils apparaîtront ici quand les joueurs activeront leur visibilité publique.</p>
+              <p className="mt-2 font-bold text-white/45">
+                Les profils apparaîtront ici quand les joueurs activeront leur visibilité publique.
+              </p>
             </div>
           )}
         </section>
@@ -231,17 +294,20 @@ function CommunityStat({ label, value }: { label: string; value: number | string
   return (
     <div className="rounded-3xl border border-white/10 bg-black/25 p-4 text-center">
       <p className="text-2xl font-black text-[#f59e0b]">{value}</p>
-      <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-white/45">{label}</p>
+      <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-white/45">
+        {label}
+      </p>
     </div>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: number | string }) {
+function MiniStat({ label, value }: { label: number | string; value: number | string }) {
   return (
     <div className="rounded-2xl bg-black/25 p-3">
       <p className="truncate text-sm font-black text-[#f59e0b]">{value}</p>
-      <p className="mt-1 text-[9px] font-black uppercase tracking-wider text-white/35">{label}</p>
+      <p className="mt-1 text-[9px] font-black uppercase tracking-wider text-white/35">
+        {label}
+      </p>
     </div>
   );
 }
-
