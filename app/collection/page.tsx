@@ -722,6 +722,42 @@ export default function CollectionPage() {
     }
   }
 
+  async function moveCardToFolder(id: string | number, nextFolder: string) {
+    const cleanFolder = nextFolder === "Toutes" ? "Non classé" : nextFolder;
+    const target = cards.find((card) => card.id === id);
+    if (!target || (target.folder || "Non classé") === cleanFolder) return;
+
+    const previousCards = cards;
+    const previousSelectedCard = selectedCard;
+
+    setCards((current) =>
+      current.map((card) =>
+        card.id === id ? { ...card, folder: cleanFolder } : card,
+      ),
+    );
+
+    setSelectedCard((current) =>
+      current && current.id === id ? { ...current, folder: cleanFolder } : current,
+    );
+
+    if (!userId || typeof id !== "string") return;
+
+    const { error: updateError } = await supabase
+      .from("collection_cards")
+      .update({ folder_id: getFolderIdByName(cleanFolder) })
+      .eq("user_id", userId)
+      .eq("id", id);
+
+    if (updateError) {
+      setCards(previousCards);
+      setSelectedCard(previousSelectedCard);
+      setError(updateError.message);
+      return;
+    }
+
+    setFolderSyncStatus(`Carte déplacée vers ${cleanFolder}.`);
+  }
+
   async function updateQuantity(id: string | number, amount: number) {
     const target = cards.find((card) => card.id === id);
     if (!target) return;
@@ -1067,6 +1103,8 @@ export default function CollectionPage() {
       {selectedCard && (
         <CardDetailModal
           card={selectedCard}
+          folders={folders}
+          onMove={(folder) => void moveCardToFolder(selectedCard.id, folder)}
           onClose={() => setSelectedCard(null)}
         />
       )}
@@ -1629,7 +1667,17 @@ function CardRow({
   );
 }
 
-function CardDetailModal({ card, onClose }: { card: CollectionCard; onClose: () => void }) {
+function CardDetailModal({
+  card,
+  folders,
+  onMove,
+  onClose,
+}: {
+  card: CollectionCard;
+  folders: string[];
+  onMove: (folder: string) => void;
+  onClose: () => void;
+}) {
   const totalPrice = Number(card.price || 0) * Number(card.quantity || 1);
 
   return (
@@ -1664,6 +1712,25 @@ function CardDetailModal({ card, onClose }: { card: CollectionCard; onClose: () 
             <h2 className="mt-2 text-2xl font-black leading-tight text-white">{card.name}</h2>
 
             {card.typeLine && <p className="mt-2 text-sm font-bold text-white/55">{card.typeLine}</p>}
+
+            <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-3">
+              <label className="text-[10px] font-black uppercase tracking-wider text-white/35">
+                Déplacer vers
+              </label>
+              <select
+                value={card.folder || "Non classé"}
+                onChange={(event) => onMove(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-[#101116] px-3 py-3 text-sm font-black text-white outline-none focus:border-[#f59e0b]/60"
+              >
+                {folders
+                  .filter((folder) => folder !== "Toutes")
+                  .map((folder) => (
+                    <option key={folder} value={folder}>
+                      {folder}
+                    </option>
+                  ))}
+              </select>
+            </div>
 
             <div className="mt-5 grid grid-cols-2 gap-3">
               <InfoBox label="Prix unité" value={formatCurrency(card.price || 0, 2)} />
