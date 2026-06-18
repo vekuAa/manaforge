@@ -1008,10 +1008,10 @@ export default function CollectionPage() {
         {!openedFolder && activeHomeTab === "collection" && (
           <button
             onClick={() => setShowFolderModal(true)}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f59e0b]/45 text-base shadow-xl shadow-orange-500/10 ring-1 ring-white/10 backdrop-blur-md transition active:scale-95"
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f59e0b] text-3xl font-black text-black shadow-2xl shadow-orange-500/20 ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
             aria-label="Créer un dossier"
           >
-            📁
+            +
           </button>
         )}
         {!openedFolder && activeHomeTab === "collection" && (
@@ -1230,7 +1230,7 @@ function CollectionHome({
             <p className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Mes dossiers</p>
             <div className="flex items-center gap-2">
               <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
-              <button onClick={onCreateFolder} className="rounded-xl bg-[#f59e0b] px-3 py-2 text-xs font-black text-black">＋ Dossier</button>
+              <button onClick={onCreateFolder} className="rounded-xl bg-white/[0.08] px-3 py-2 text-xs font-black text-white ring-1 ring-white/10">＋ Dossier</button>
             </div>
           </div>
 
@@ -1419,52 +1419,97 @@ function BinderCard({
   onColorChange: (color: string) => void;
 }) {
   const isDefaultFolder = folder.name === "Non classé";
-  const background = `linear-gradient(90deg, ${folder.color}33, rgba(255,255,255,.05))`;
+  const hasCover = Boolean(folder.cover);
 
   if (compact) {
     return (
-      <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.055] p-3">
-        <button onClick={onOpen} className="w-full text-left">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl text-2xl" style={{ backgroundColor: folder.color }}>
+      <article className="group relative overflow-hidden rounded-[1.65rem] border border-white/10 bg-white/[0.055] shadow-xl shadow-black/20 transition active:scale-[0.98]">
+        <button type="button" onClick={onOpen} className="block w-full text-left">
+          <div className="relative h-28 overflow-hidden bg-black/35">
+            {hasCover ? (
+              <img src={folder.cover} alt={folder.name} className="h-full w-full object-cover opacity-70 blur-[1px] transition group-hover:scale-105" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-5xl opacity-80">📁</div>
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-[#101116] via-[#101116]/45 to-transparent" />
+            <div className="absolute bottom-3 left-3 flex h-12 w-12 items-center justify-center rounded-2xl text-2xl shadow-xl ring-1 ring-white/20" style={{ backgroundColor: folder.color }}>
               📁
             </div>
-            <span className="text-white/60">...</span>
+            <div className="absolute right-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-black text-white ring-1 ring-white/10">
+              {folder.uniqueCards} uniques
+            </div>
           </div>
-          <p className="mt-3 truncate font-black">{folder.name}</p>
-          <p className="text-xs font-bold text-white/70">{folder.totalQuantity} cartes</p>
-          <p className="mt-1 text-sm font-black">{formatCurrency(folder.totalValue, 2)}</p>
+
+          <div className="p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="truncate text-base font-black">{folder.name}</h3>
+                <p className="mt-0.5 text-xs font-bold text-white/50">{folder.totalQuantity} cartes</p>
+              </div>
+              <span className="text-xl font-black text-white/35">›</span>
+            </div>
+            <p className="mt-3 text-lg font-black text-[#f59e0b]">{formatCurrency(folder.totalValue, 2)}</p>
+          </div>
         </button>
-        <ColorDots color={folder.color} onColorChange={onColorChange} />
+
+        <div className="border-t border-white/10 px-3 py-2">
+          <ColorDots color={folder.color} onColorChange={onColorChange} />
+        </div>
+
         {!isDefaultFolder && (
-          <button onClick={() => { if (window.confirm(`Supprimer le dossier "${folder.name}" ? Les cartes seront déplacées dans Non classé.`)) onDelete(); }} className="absolute right-2 top-2 rounded-full bg-black/55 px-2 py-1 text-xs font-black text-red-300 ring-1 ring-white/10">
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`Supprimer le dossier "${folder.name}" ? Les cartes seront déplacées dans Non classé.`)) onDelete();
+            }}
+            className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-xs font-black text-red-200 opacity-0 ring-1 ring-white/10 transition group-hover:opacity-100"
+            aria-label={`Supprimer ${folder.name}`}
+          >
             ✕
           </button>
         )}
-      </div>
+      </article>
     );
   }
 
   return (
-    <div className="group relative overflow-hidden rounded-xl border border-white/10 bg-cover bg-center" style={{ backgroundImage: background }}>
-      <span className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: folder.color }} />
-      <button onClick={onOpen} className="flex min-h-20 w-full items-center justify-between gap-3 px-4 py-3 text-left">
-        <div>
-          <p className="font-black">{folder.name}</p>
-          <p className="text-xs font-bold text-white/70">{folder.totalQuantity} cartes · {folder.uniqueCards} uniques</p>
+    <article className="group relative overflow-hidden rounded-[1.35rem] border border-white/10 bg-white/[0.055] shadow-lg shadow-black/20 transition active:scale-[0.99]">
+      <button type="button" onClick={onOpen} className="flex w-full items-center gap-3 p-3 text-left">
+        <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-2xl bg-black/35 ring-1 ring-white/10">
+          {hasCover ? (
+            <img src={folder.cover} alt={folder.name} className="h-full w-full object-cover opacity-80" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-3xl">📁</div>
+          )}
+          <span className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: folder.color }} />
         </div>
-        <div className="text-right">
-          <p className="font-black">{formatCurrency(folder.totalValue, 2)}</p>
-          <p className="text-xs text-emerald-400">+0,00 €</p>
+
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-lg font-black">{folder.name}</h3>
+          <p className="mt-1 text-xs font-bold text-white/50">{folder.totalQuantity} cartes · {folder.uniqueCards} uniques</p>
+          <p className="mt-2 text-base font-black text-[#f59e0b]">{formatCurrency(folder.totalValue, 2)}</p>
         </div>
+
+        <span className="text-2xl font-black text-white/35">›</span>
       </button>
-      <div className="px-4 pb-2"><ColorDots color={folder.color} onColorChange={onColorChange} /></div>
+
+      <div className="border-t border-white/10 px-3 py-2">
+        <ColorDots color={folder.color} onColorChange={onColorChange} />
+      </div>
+
       {!isDefaultFolder && (
-        <button onClick={() => { if (window.confirm(`Supprimer le dossier "${folder.name}" ? Les cartes seront déplacées dans Non classé.`)) onDelete(); }} className="absolute right-2 top-2 rounded-full bg-black/55 px-2 py-1 text-xs font-black text-red-300 ring-1 ring-white/10">
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm(`Supprimer le dossier "${folder.name}" ? Les cartes seront déplacées dans Non classé.`)) onDelete();
+          }}
+          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-xs font-black text-red-200 ring-1 ring-white/10"
+          aria-label={`Supprimer ${folder.name}`}
+        >
           ✕
         </button>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -1783,12 +1828,63 @@ function FolderModal({
   onCreate: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur">
-      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#17181f] p-5">
-        <div className="flex items-center justify-between"><h2 className="text-xl font-black">Nouveau dossier</h2><button onClick={onClose}>✕</button></div>
-        <input value={newFolder} onChange={(event) => setNewFolder(event.target.value)} placeholder="Nom du dossier" className="mt-4 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-bold outline-none" autoFocus />
-        <div className="mt-4 flex gap-2">{FOLDER_COLOR_PALETTE.map((color) => <button key={color} onClick={() => setNewFolderColor(color)} className={`h-8 w-8 rounded-full border-2 ${newFolderColor === color ? "border-white" : "border-transparent"}`} style={{ backgroundColor: color }} />)}</div>
-        <button onClick={onCreate} className="mt-5 w-full rounded-xl bg-[#f59e0b] py-3 font-black text-black">Créer</button>
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/80 p-3 backdrop-blur-md sm:items-center">
+      <div className="w-full max-w-sm overflow-hidden rounded-[2rem] border border-white/10 bg-[#17181f] shadow-2xl">
+        <div className="relative h-32 bg-black/30">
+          <div className="absolute inset-0 opacity-40" style={{ background: `radial-gradient(circle at 30% 20%, ${newFolderColor}, transparent 45%)` }} />
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 font-black ring-1 ring-white/10"
+            aria-label="Fermer"
+          >
+            ✕
+          </button>
+          <div className="absolute bottom-4 left-5 flex h-16 w-16 items-center justify-center rounded-3xl text-4xl shadow-xl ring-1 ring-white/20" style={{ backgroundColor: newFolderColor }}>
+            📁
+          </div>
+        </div>
+
+        <div className="p-5">
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">Nouveau dossier</p>
+          <h2 className="mt-1 text-2xl font-black">Créer un classeur</h2>
+          <p className="mt-1 text-sm font-bold text-white/45">Exemple : Trade, Staples, Commander, Full set MH3.</p>
+
+          <input
+            value={newFolder}
+            onChange={(event) => setNewFolder(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onCreate();
+            }}
+            placeholder="Nom du dossier"
+            className="mt-5 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 font-bold outline-none transition focus:border-[#f59e0b]/60"
+            autoFocus
+          />
+
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-black uppercase tracking-wider text-white/45">Couleur</p>
+            <div className="flex flex-wrap gap-2">
+              {FOLDER_COLOR_PALETTE.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => setNewFolderColor(color)}
+                  className={`h-9 w-9 rounded-full border-2 transition ${newFolderColor === color ? "scale-110 border-white" : "border-transparent"}`}
+                  style={{ backgroundColor: color }}
+                  aria-label={`Couleur ${color}`}
+                />
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onCreate}
+            className="mt-6 w-full rounded-2xl bg-[#f59e0b] py-4 font-black text-black shadow-xl shadow-orange-500/10 transition active:scale-[0.98]"
+          >
+            Créer le dossier
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2230,3 +2326,4 @@ function FullsetAddModal({
     </div>
   );
 }
+
