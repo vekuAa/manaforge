@@ -88,7 +88,7 @@ export default function HomePage() {
             .select("id,name,image,set_name,set_code,collector_number,quantity,price,foil,language,created_at")
             .eq("user_id", authData.user.id)
             .order("created_at", { ascending: false })
-            .limit(24),
+            .range(0, 9999),
           supabase
             .from("profiles")
             .select("username,display_name")
@@ -200,7 +200,7 @@ export default function HomePage() {
 
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
             <HeroStat label="Cartes" value={stats.collectionTotalCards} helper={`${stats.collectionUniqueCards} uniques`} />
-            <HeroStat label="Collection" value={formatCurrency(stats.collectionValue)} helper="24 dernières cartes chargées" />
+            <HeroStat label="Collection" value={formatCurrency(stats.collectionValue)} helper="valeur totale" />
             <HeroStat label="Decks" value={stats.totalDecks} helper={formatCurrency(stats.deckValue)} />
             <HeroStat label="Winrate" value={`${stats.winrate}%`} helper={`${stats.games} parties`} />
           </div>
@@ -360,7 +360,7 @@ export default function HomePage() {
             <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">Inspiration Commander</p>
             <h2 className="mt-1 text-2xl font-black">Améliorer tes decks</h2>
             <p className="mt-2 text-sm font-bold leading-relaxed text-white/55">
-              Zone d’inspiration : idées de upgrades, combos et tendances. Plus tard, ManaForge pourra la personnaliser selon tes commandants.
+              Zone d’inspiration : 
             </p>
 
             <div className="mt-5 grid gap-3">

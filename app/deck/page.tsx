@@ -1055,7 +1055,7 @@ function DeckDetail({
       </section>
 
       {landBreakdown.length > 0 && (
-        <Panel title="Répartition des terrains" subtitle={`${analysis.lands} terrains détectés`}>
+        <Panel title="Répartition des terrains" subtitle={`${analysis.lands} terrains détectés · bases + non-basiques`}>
           <div className="grid gap-3 md:grid-cols-5">
             {landBreakdown.map((item) => (
               <div key={item.label} className="rounded-2xl bg-black/25 p-3">
@@ -1307,29 +1307,46 @@ function buildTypeBreakdown(decklist?: DeckCard[]) {
 function buildLandBreakdown(decklist?: DeckCard[]) {
   const lands = (decklist || []).filter(isLandCard);
   const total = lands.reduce((sum, card) => sum + Number(card.quantity || 1), 0);
-  const landGroups = [
-    { label: "Plaines", icon: "⚪", keywords: ["plains", "plaine"] },
-    { label: "Îles", icon: "🔵", keywords: ["island", "ile"] },
-    { label: "Marais", icon: "⚫", keywords: ["swamp", "marais"] },
-    { label: "Montagnes", icon: "🔴", keywords: ["mountain", "montagne"] },
-    { label: "Forêts", icon: "🟢", keywords: ["forest", "foret"] },
+
+  const basics = [
+    { label: "Plaines", icon: "⚪", names: ["plains", "plaine"] },
+    { label: "Îles", icon: "🔵", names: ["island", "ile"] },
+    { label: "Marais", icon: "⚫", names: ["swamp", "marais"] },
+    { label: "Montagnes", icon: "🔴", names: ["mountain", "montagne"] },
+    { label: "Forêts", icon: "🟢", names: ["forest", "foret"] },
   ];
 
-  return landGroups
-    .map((group) => {
-      const count = lands.reduce((sum, card) => {
-        const name = normalizeText(card.name);
-        const matches = group.keywords.some((keyword) => name.includes(keyword));
-        return matches ? sum + Number(card.quantity || 1) : sum;
-      }, 0);
+  const basicRows = basics.map((group) => {
+    const count = lands.reduce((sum, card) => {
+      const name = normalizeText(card.name);
+      const matches = group.names.some((basicName) => name === basicName);
+      return matches ? sum + Number(card.quantity || 1) : sum;
+    }, 0);
 
-      return {
-        ...group,
-        count,
-        percent: total > 0 ? Math.round((count / total) * 100) : 0,
-      };
-    })
-    .filter((item) => item.count > 0);
+    return {
+      ...group,
+      count,
+      percent: total > 0 ? Math.round((count / total) * 100) : 0,
+    };
+  });
+
+  const basicTotal = basicRows.reduce((sum, item) => sum + item.count, 0);
+  const nonBasicTotal = Math.max(0, total - basicTotal);
+
+  return [
+    ...basicRows.filter((item) => item.count > 0),
+    ...(nonBasicTotal > 0
+      ? [
+          {
+            label: "Non-basiques",
+            icon: "◇",
+            names: [] as string[],
+            count: nonBasicTotal,
+            percent: total > 0 ? Math.round((nonBasicTotal / total) * 100) : 0,
+          },
+        ]
+      : []),
+  ];
 }
 
 function getDeckHealth(analysis: ReturnType<typeof analyzeDeck>) {
