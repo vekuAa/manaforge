@@ -50,6 +50,7 @@ type DeckRow = {
   losses: number | null;
   decklist: DeckCard[] | null;
   created_at?: string;
+  is_public?: boolean | null;
 };
 
 type ArchidektCategory = string | { name?: string };
@@ -106,6 +107,7 @@ function mapDeckRow(row: DeckRow): Deck {
     wins: Number(row.wins || 0),
     losses: Number(row.losses || 0),
     decklist: Array.isArray(row.decklist) ? row.decklist : [],
+    is_public: Boolean(row.is_public),
   };
 }
 
@@ -128,7 +130,7 @@ async function saveDeckToSupabase(
       losses: Number(deck.losses || 0),
       decklist: deck.decklist || [],
     })
-    .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at")
+    .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,is_public,created_at")
     .single();
 
   if (error) {
@@ -179,6 +181,7 @@ export default function DecksPage() {
   const [deckViewMode, setDeckViewMode] = useState<"grid" | "list">("grid");
   const [deckCategoryFilter, setDeckCategoryFilter] = useState("Toutes");
   const [isAddingToCollection, setIsAddingToCollection] = useState(false);
+  const [isRefreshingDeck, setIsRefreshingDeck] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,7 +207,7 @@ export default function DecksPage() {
 
         const { data: remoteDecks, error } = await supabase
           .from("decks")
-          .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at")
+          .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,is_public,created_at")
           .eq("user_id", currentUser.id)
           .order("created_at", { ascending: true });
 
@@ -229,7 +232,7 @@ export default function DecksPage() {
           const { data: insertedDecks, error: importError } = await supabase
             .from("decks")
             .insert(decksToImport)
-            .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,created_at");
+            .select("id,user_id,name,commander,commander_image,colors,cards,price,wins,losses,decklist,is_public,created_at");
 
           if (importError) throw importError;
           cloudDecks = ((insertedDecks || []) as DeckRow[]).map(mapDeckRow);
@@ -359,22 +362,34 @@ type ScryfallCard = {
 
 
   async function enrichDecklist(decklist: DeckCard[]): Promise<DeckCard[]> {
-    const response = await fetch("/api/scryfall/collection", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cards: decklist.map((card) => ({ name: card.name })),
-      }),
-    });
+    const chunks: DeckCard[][] = [];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Scryfall collection error:", response.status, errorText);
-      return decklist;
+    for (let index = 0; index < decklist.length; index += 75) {
+      chunks.push(decklist.slice(index, index + 75));
     }
 
-    const data = await response.json();
-    const foundCards: ScryfallCard[] = Array.isArray(data.data) ? data.data : [];
+    const foundCards: ScryfallCard[] = [];
+
+    for (const chunk of chunks) {
+      const response = await fetch("/api/scryfall/collection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cards: chunk.map((card) => ({ name: card.name })),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Scryfall collection error:", response.status, errorText);
+        continue;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.data)) foundCards.push(...data.data);
+    }
+
+    if (foundCards.length === 0) return decklist;
 
     return decklist.map((card) => {
       const found = foundCards.find((item) => item.name.toLowerCase() === card.name.toLowerCase());
@@ -385,6 +400,7 @@ type ScryfallCard = {
           found?.prices?.usd ||
           found?.prices?.eur_foil ||
           found?.prices?.usd_foil ||
+          card.price ||
           0,
       );
 
@@ -398,7 +414,7 @@ type ScryfallCard = {
         price,
         typeLine: found?.type_line || card.typeLine || "",
         oracleText: oracleText || card.oracleText || "",
-        manaValue: Number(found?.cmc || card.manaValue || 0),
+        manaValue: Number(found?.cmc ?? card.manaValue ?? 0),
       };
     });
   }
@@ -605,6 +621,42 @@ type ScryfallCard = {
     }
   }
 
+  async function refreshDeckMetadata(deck: Deck) {
+    if (!deck.decklist?.length) return;
+
+    try {
+      setIsRefreshingDeck(true);
+      setImportError("");
+      const nextDecklist = await enrichDecklist(deck.decklist);
+      const nextCards = nextDecklist.reduce((sum, card) => sum + Number(card.quantity || 1), 0);
+      const nextPrice = getDeckTotalPrice(nextDecklist);
+      const nextDeck: Deck = {
+        ...deck,
+        decklist: nextDecklist,
+        cards: nextCards,
+        price: nextPrice,
+      };
+
+      setDecks((current) => current.map((item) => (item.id === deck.id ? nextDeck : item)));
+
+      if (userId && typeof deck.id === "string") {
+        const { error } = await supabase
+          .from("decks")
+          .update({ decklist: nextDecklist, cards: nextCards, price: nextPrice })
+          .eq("user_id", userId)
+          .eq("id", deck.id);
+
+        if (error) throw error;
+      }
+
+      setSyncStatus("Deck mis à jour avec les données Scryfall.");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Impossible de mettre à jour les infos du deck.");
+    } finally {
+      setIsRefreshingDeck(false);
+    }
+  }
+
   async function toggleDeckPrivacy(deck: Deck) {
   const nextValue = !deck.is_public;
 
@@ -650,61 +702,10 @@ type ScryfallCard = {
           {syncStatus && (
             <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm font-bold text-muted">{syncStatus}</p>
           )}
+          {importError && <p className="mt-4 rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">{importError}</p>}
         </header>
 
-        <div className="mt-8 card-soft p-5">
-          <h2 className="text-xl font-black">Créer un deck</h2>
-          <div className="mt-5 space-y-4">
-            <input value={newDeckName} onChange={(event) => setNewDeckName(event.target.value)} placeholder="Nom du deck" className="input-premium" />
-            <div className="relative">
-              <input value={newCommander} onChange={(event) => setNewCommander(event.target.value)} placeholder="Commandant" className="input-premium" />
-              {(commanderSuggestions.length > 0 || isSearchingCommander) && (
-                <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#09090d] shadow-2xl">
-                  {isSearchingCommander && <p className="p-3 text-sm text-muted">Recherche...</p>}
-                  {commanderSuggestions.map((suggestion) => (
-                    <button key={suggestion} type="button" onClick={() => { setNewCommander(suggestion); setCommanderSuggestions([]); }} className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10">
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button onClick={addDeck} className="btn-primary w-full">Ajouter le deck</button>
-          </div>
-
-          <div className="mt-6 border-t border-white/10 pt-6">
-            <h3 className="text-lg font-black">Importer depuis Archidekt</h3>
-            <p className="mt-1 text-sm text-muted">Colle l’URL publique de ton deck Archidekt.</p>
-            <input value={archidektUrl} onChange={(event) => setArchidektUrl(event.target.value)} placeholder="https://archidekt.com/decks/22768503/kudo_kudo" className="input-premium mt-4" />
-            {importError && <p className="mt-3 rounded-2xl bg-red-500/10 p-3 text-sm font-bold text-red-300">{importError}</p>}
-            <button onClick={importArchidektDeck} disabled={isImporting} className="btn-primary mt-4 w-full disabled:cursor-not-allowed disabled:opacity-50">
-              {isImporting ? "Import en cours..." : "Importer Archidekt"}
-            </button>
-          </div>
-        </div>
-
-        {decks.length > 0 && (
-          <div className="mt-6 grid gap-3">
-            {decks.map((deck) => {
-              const games = deck.wins + deck.losses;
-              const winrate = games === 0 ? 0 : Math.round((deck.wins / games) * 100);
-              return (
-                <button key={deck.id} onClick={() => setSelectedDeckId(deck.id)} className={`card-soft p-4 text-left transition ${selectedDeckId === deck.id ? "border-accent bg-white/10" : "border-white/10"}`}>
-                  <div className="flex items-center gap-4">
-                    {deck.commanderImage ? <img src={deck.commanderImage} alt={deck.commander} className="h-20 w-14 rounded-xl object-cover" /> : <div className="flex h-20 w-14 items-center justify-center rounded-xl bg-black/40 text-2xl">🎴</div>}
-                    <div className="flex-1">
-                      <h3 className="font-black">{deck.name}</h3>
-                      <p className="text-sm font-bold text-accent">{deck.commander}</p>
-                      <p className="mt-1 text-xs text-muted">{deck.colors} · {deck.cards} cartes · {winrate}% WR</p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {selectedDeck && (
+        {selectedDeck ? (
           <DeckDetail
             deck={selectedDeck}
             analysis={analysis}
@@ -713,16 +714,95 @@ type ScryfallCard = {
             categoryFilter={deckCategoryFilter}
             setCategoryFilter={setDeckCategoryFilter}
             isAddingToCollection={isAddingToCollection}
+            isRefreshingDeck={isRefreshingDeck}
             onClose={() => setSelectedDeckId(null)}
             onAddToCollection={() => void addDeckToCollection(selectedDeck)}
+            onRefreshMetadata={() => void refreshDeckMetadata(selectedDeck)}
             onWin={() => void updateDeckStats(selectedDeck.id, "win")}
             onLoss={() => void updateDeckStats(selectedDeck.id, "loss")}
-              onTogglePrivacy={() => void toggleDeckPrivacy(selectedDeck)}
+            onTogglePrivacy={() => void toggleDeckPrivacy(selectedDeck)}
             onDelete={() => {
               if (window.confirm(`Supprimer le deck "${selectedDeck.name}" ?`)) void deleteDeck(selectedDeck.id);
             }}
-            
           />
+        ) : (
+          <>
+            <section className="mt-8 rounded-[2rem] border border-white/10 bg-white/[0.055] p-5 shadow-2xl">
+              <h2 className="text-xl font-black">Créer ou importer</h2>
+              <p className="mt-1 text-sm text-muted">Ajoute un deck à la main ou importe directement depuis Archidekt.</p>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
+                  <h3 className="font-black">Nouveau deck</h3>
+                  <div className="mt-4 space-y-3">
+                    <input value={newDeckName} onChange={(event) => setNewDeckName(event.target.value)} placeholder="Nom du deck" className="input-premium" />
+                    <div className="relative">
+                      <input value={newCommander} onChange={(event) => setNewCommander(event.target.value)} placeholder="Commandant" className="input-premium" />
+                      {(commanderSuggestions.length > 0 || isSearchingCommander) && (
+                        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#09090d] shadow-2xl">
+                          {isSearchingCommander && <p className="p-3 text-sm text-muted">Recherche...</p>}
+                          {commanderSuggestions.map((suggestion) => (
+                            <button key={suggestion} type="button" onClick={() => { setNewCommander(suggestion); setCommanderSuggestions([]); }} className="block w-full border-b border-white/5 px-4 py-3 text-left text-sm font-bold hover:bg-white/10">
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={addDeck} className="btn-primary w-full">Ajouter le deck</button>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
+                  <h3 className="font-black">Importer Archidekt</h3>
+                  <p className="mt-1 text-sm text-muted">Colle l’URL publique de ton deck.</p>
+                  <input value={archidektUrl} onChange={(event) => setArchidektUrl(event.target.value)} placeholder="https://archidekt.com/decks/..." className="input-premium mt-4" />
+                  <button onClick={importArchidektDeck} disabled={isImporting} className="btn-primary mt-4 w-full disabled:cursor-not-allowed disabled:opacity-50">
+                    {isImporting ? "Import en cours..." : "Importer Archidekt"}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {decks.length > 0 ? (
+              <section className="mt-6">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-xl font-black">Mes decks</h2>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/60">{decks.length} decks</span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {decks.map((deck) => {
+                    const games = deck.wins + deck.losses;
+                    const winrate = games === 0 ? 0 : Math.round((deck.wins / games) * 100);
+                    const deckCardCount = deck.decklist?.reduce((sum, card) => sum + Number(card.quantity || 1), 0) || deck.cards || 0;
+                    return (
+                      <button key={deck.id} onClick={() => { setDeckCategoryFilter("Toutes"); setSelectedDeckId(deck.id); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="group rounded-[1.6rem] border border-white/10 bg-white/[0.055] p-3 text-left transition hover:bg-white/[0.08] active:scale-[0.99]">
+                        <div className="flex items-center gap-4">
+                          {deck.commanderImage ? <img src={deck.commanderImage} alt={deck.commander} className="h-24 w-16 rounded-2xl object-cover shadow-xl" /> : <div className="flex h-24 w-16 items-center justify-center rounded-2xl bg-black/40 text-2xl">🎴</div>}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <h3 className="truncate text-lg font-black">{deck.name}</h3>
+                                <p className="truncate text-sm font-bold text-accent">{deck.commander}</p>
+                              </div>
+                              <span className="rounded-full bg-black/30 px-2 py-1 text-[10px] font-black text-white/50">Ouvrir</span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                              <DeckMiniStatCompact label="Cartes" value={deckCardCount} />
+                              <DeckMiniStatCompact label="WR" value={`${winrate}%`} />
+                              <DeckMiniStatCompact label="Prix" value={formatCurrency(Number(deck.price || 0))} />
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : (
+              <p className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center text-muted">Aucun deck pour le moment.</p>
+            )}
+          </>
         )}
       </section>
       <BottomNav />
@@ -731,9 +811,17 @@ type ScryfallCard = {
 }
 
 
+function isLandCard(card: DeckCard) {
+  const type = card.typeLine?.toLowerCase() || "";
+  const name = card.name.toLowerCase();
+  const basicNames = ["plains", "island", "swamp", "mountain", "forest", "wastes", "plaine", "île", "marais", "montagne", "forêt"];
+
+  return type.includes("land") || basicNames.some((landName) => name === landName || name.includes(` ${landName}`));
+}
+
 function getDeckCardCategory(card: DeckCard) {
   const type = card.typeLine?.toLowerCase() || "";
-  if (type.includes("land")) return "Terrains";
+  if (isLandCard(card)) return "Terrains";
   if (type.includes("creature")) return "Créatures";
   if (type.includes("artifact")) return "Artefacts";
   if (type.includes("enchantment")) return "Enchantements";
@@ -757,8 +845,10 @@ function DeckDetail({
   categoryFilter,
   setCategoryFilter,
   isAddingToCollection,
+  isRefreshingDeck,
   onClose,
   onAddToCollection,
+  onRefreshMetadata,
   onWin,
   onLoss,
   onDelete,
@@ -771,71 +861,115 @@ function DeckDetail({
   categoryFilter: string;
   setCategoryFilter: (category: string) => void;
   isAddingToCollection: boolean;
+  isRefreshingDeck: boolean;
   onClose: () => void;
   onAddToCollection: () => void;
+  onRefreshMetadata: () => void;
   onWin: () => void;
   onLoss: () => void;
   onDelete: () => void;
-   onTogglePrivacy: () => void;
+  onTogglePrivacy: () => void;
 }) {
   const categories = ["Toutes", "Terrains", "Créatures", "Artefacts", "Enchantements", "Éphémères", "Rituels", "Planeswalkers", "Autres"];
   const visibleCards = (deck.decklist || []).filter((card) => categoryFilter === "Toutes" || getDeckCardCategory(card) === categoryFilter);
   const games = deck.wins + deck.losses;
   const winrate = games > 0 ? Math.round((deck.wins / games) * 100) : 0;
+  const totalCards = (deck.decklist || []).reduce((sum, card) => sum + Number(card.quantity || 1), 0);
+  const manaCurve = buildManaCurve(deck.decklist);
 
   return (
     <div className="mt-6 space-y-5">
-      <button
-        onClick={onClose}
-        className="rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-black text-white/80"
-      >
-        ← Retour à mes decks
-      </button>
+      <div className="sticky top-0 z-30 -mx-4 border-b border-white/10 bg-[#101116]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0 md:py-0">
+        <button
+          onClick={onClose}
+          className="rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-black text-white/80"
+        >
+          ← Retour aux decks
+        </button>
+      </div>
 
-      <section className="card-premium overflow-hidden p-5">
-        <div className="grid gap-5 md:grid-cols-[180px_1fr]">
-          <div className="mx-auto w-full max-w-[170px]">
+      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.09] to-white/[0.035] p-4 shadow-2xl md:p-5">
+        <div className="grid gap-5 md:grid-cols-[190px_1fr]">
+          <div className="mx-auto w-full max-w-[190px]">
             {deck.commanderImage ? (
-              <img src={deck.commanderImage} alt={deck.commander} className="aspect-[63/88] w-full rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" />
+              <img src={deck.commanderImage} alt={deck.commander} className="aspect-[63/88] w-full rounded-3xl object-cover shadow-2xl ring-1 ring-white/10" />
             ) : (
-              <div className="flex aspect-[63/88] w-full items-center justify-center rounded-2xl bg-black/40 text-5xl">🎴</div>
+              <div className="flex aspect-[63/88] w-full items-center justify-center rounded-3xl bg-black/40 text-5xl">🎴</div>
             )}
           </div>
 
           <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-[0.2em] text-muted">Deck sélectionné</p>
-            <h2 className="mt-2 text-3xl font-black leading-tight">{deck.name}</h2>
-            <p className="mt-1 font-bold text-accent">{deck.commander}</p>
-            <p className="mt-2 text-sm text-muted">{deck.colors} · {deck.cards} cartes · {winrate}% WR</p>
-            <button
-  onClick={onTogglePrivacy}
-  className="mt-3 rounded-xl bg-white/10 px-4 py-2 text-sm font-black"
->
-  {deck.is_public ? "🌍 Public" : "🔒 Privé"}
-</button>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <DeckMiniStat label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
-              <DeckMiniStat label="Note" value={`${analysis.score}/10`} />
-              <DeckMiniStat label="Terrains" value={analysis.lands} />
-              <DeckMiniStat label="Créatures" value={analysis.creatures} />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-[#f59e0b] px-3 py-1 text-xs font-black text-black">Commander</span>
+              <button onClick={onTogglePrivacy} className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
+                {deck.is_public ? "🌍 Public" : "🔒 Privé"}
+              </button>
             </div>
 
-            <button
-              onClick={onAddToCollection}
-              disabled={isAddingToCollection || !deck.decklist?.length}
-              className="mt-5 w-full rounded-2xl bg-[#f59e0b] px-4 py-4 font-black text-black disabled:opacity-50"
-            >
-              {isAddingToCollection ? "Ajout en cours..." : "Ajouter ce deck à ma collection"}
-            </button>
+            <h2 className="mt-3 text-3xl font-black leading-tight md:text-4xl">{deck.name}</h2>
+            <p className="mt-1 text-lg font-black text-accent">{deck.commander}</p>
+            <p className="mt-2 text-sm font-bold text-muted">{deck.colors} · {totalCards || deck.cards} cartes · {deck.wins}V / {deck.losses}D · {winrate}% WR</p>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <DeckMiniStat label="Valeur" value={formatCurrency(analysis.totalPrice)} />
+              <DeckMiniStat label="Terrains" value={analysis.lands} helper="cartes détectées" />
+              <DeckMiniStat label="Sorts" value={Math.max(0, totalCards - analysis.lands)} helper="hors terrains" />
+              <DeckMiniStat label="MV moyen" value={analysis.averageManaValue} helper="coût moyen hors terrains" />
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <button
+                onClick={onAddToCollection}
+                disabled={isAddingToCollection || !deck.decklist?.length}
+                className="rounded-2xl bg-[#f59e0b] px-4 py-4 font-black text-black disabled:opacity-50"
+              >
+                {isAddingToCollection ? "Ajout en cours..." : "Ajouter ce deck à ma collection"}
+              </button>
+              <button
+                onClick={onRefreshMetadata}
+                disabled={isRefreshingDeck || !deck.decklist?.length}
+                className="rounded-2xl border border-white/10 bg-white/[0.075] px-4 py-4 font-black text-white disabled:opacity-50"
+              >
+                {isRefreshingDeck ? "Mise à jour..." : "Réparer les infos cartes"}
+              </button>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="card-soft p-4">
+      <section className="grid gap-3 md:grid-cols-4">
+        <ProMetric label="Ramp" value={analysis.ramp} target="8-12" status={analysis.ramp >= 8 ? "OK" : "Bas"} />
+        <ProMetric label="Pioche" value={analysis.draw} target="8-12" status={analysis.draw >= 8 ? "OK" : "Bas"} />
+        <ProMetric label="Interactions" value={analysis.removal} target="6-10" status={analysis.removal >= 6 ? "OK" : "Bas"} />
+        <ProMetric label="Wraths" value={analysis.boardWipes} target="2-4" status={analysis.boardWipes >= 2 ? "OK" : "Bas"} />
+      </section>
+
+      <section className="rounded-[2rem] border border-white/10 bg-white/[0.045] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-black">Courbe de mana</h3>
+            <p className="text-sm text-muted">Le MV moyen = mana value moyen des sorts, terrains exclus.</p>
+          </div>
+          <span className="rounded-full bg-black/30 px-3 py-1 text-sm font-black text-accent">{analysis.averageManaValue}</span>
+        </div>
+        <div className="mt-4 grid grid-cols-8 items-end gap-2">
+          {manaCurve.map((item) => (
+            <div key={item.label} className="text-center">
+              <div className="flex h-24 items-end rounded-xl bg-black/25 p-1">
+                <div className="w-full rounded-lg bg-[#f59e0b]" style={{ height: `${Math.max(8, item.percent)}%` }} />
+              </div>
+              <p className="mt-1 text-[10px] font-black text-white/45">{item.label}</p>
+              <p className="text-xs font-black">{item.count}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-[2rem] border border-white/10 bg-white/[0.045] p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-xl font-black">Decklist</h3>
-            <p className="text-sm text-muted">Affichage moderne par type de carte.</p>
+            <p className="text-sm text-muted">Triée par type. Les compteurs utilisent les quantités réelles.</p>
           </div>
           <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
         </div>
@@ -867,20 +1001,6 @@ function DeckDetail({
         </div>
       </section>
 
-      <section className="rounded-2xl bg-black/30 p-4">
-        <h3 className="mb-4 text-sm font-black uppercase tracking-wider text-muted">Analyse Scryfall</h3>
-        <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-          <AnalysisBox label="Ramp" value={analysis.ramp} />
-          <AnalysisBox label="Pioche" value={analysis.draw} />
-          <AnalysisBox label="Removal" value={analysis.removal} />
-          <AnalysisBox label="Wraths" value={analysis.boardWipes} />
-          <AnalysisBox label="Artefacts" value={analysis.artifacts} />
-          <AnalysisBox label="Enchant." value={analysis.enchantments} />
-          <AnalysisBox label="MV moyen" value={analysis.averageManaValue} />
-          <AnalysisBox label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
-        </div>
-      </section>
-
       <div className="grid grid-cols-2 gap-3">
         <button onClick={onWin} className="rounded-2xl bg-green-500/20 px-4 py-4 font-black text-green-300">+ Victoire</button>
         <button onClick={onLoss} className="rounded-2xl bg-red-500/20 px-4 py-4 font-black text-red-300">+ Défaite</button>
@@ -890,11 +1010,21 @@ function DeckDetail({
   );
 }
 
-function DeckMiniStat({ label, value }: { label: string; value: number | string }) {
+function DeckMiniStat({ label, value, helper }: { label: string; value: number | string; helper?: string }) {
   return (
     <div className="rounded-2xl bg-black/25 p-4 text-center">
       <p className="text-2xl font-black text-accent">{value}</p>
       <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-muted">{label}</p>
+      {helper && <p className="mt-1 text-[10px] font-bold text-white/35">{helper}</p>}
+    </div>
+  );
+}
+
+function DeckMiniStatCompact({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl bg-black/25 px-2 py-2">
+      <p className="truncate text-sm font-black text-accent">{value}</p>
+      <p className="text-[9px] font-bold uppercase tracking-wider text-white/40">{label}</p>
     </div>
   );
 }
@@ -939,6 +1069,44 @@ function DeckCardRow({ card }: { card: DeckCard }) {
   );
 }
 
+function ProMetric({ label, value, target, status }: { label: string; value: number; target: string; status: string }) {
+  const good = status === "OK";
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-black">{label}</p>
+        <span className={`rounded-full px-2 py-1 text-[10px] font-black ${good ? "bg-emerald-400/15 text-emerald-300" : "bg-orange-400/15 text-orange-300"}`}>{status}</span>
+      </div>
+      <p className="mt-3 text-3xl font-black text-accent">{value}</p>
+      <p className="mt-1 text-xs font-bold text-white/45">Repère EDH : {target}</p>
+    </div>
+  );
+}
+
+function buildManaCurve(decklist?: DeckCard[]) {
+  const buckets = [
+    { label: "0", count: 0 },
+    { label: "1", count: 0 },
+    { label: "2", count: 0 },
+    { label: "3", count: 0 },
+    { label: "4", count: 0 },
+    { label: "5", count: 0 },
+    { label: "6", count: 0 },
+    { label: "7+", count: 0 },
+  ];
+
+  (decklist || []).forEach((card) => {
+    if (isLandCard(card)) return;
+    const quantity = Number(card.quantity || 1);
+    const manaValue = Math.max(0, Math.floor(Number(card.manaValue || 0)));
+    const index = manaValue >= 7 ? 7 : manaValue;
+    buckets[index].count += quantity;
+  });
+
+  const max = Math.max(1, ...buckets.map((item) => item.count));
+  return buckets.map((item) => ({ ...item, percent: Math.round((item.count / max) * 100) }));
+}
+
 function AnalysisBox({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-xl bg-white/5 p-3">
@@ -964,7 +1132,7 @@ function analyzeDeck(decklist?: DeckCard[]) {
       boardWipes: 0,
       averageManaValue: 0,
       totalPrice: 0,
-      score: 0,
+      recommendations: [] as string[],
     };
   }
 
@@ -977,7 +1145,7 @@ function analyzeDeck(decklist?: DeckCard[]) {
       const text = card.oracleText?.toLowerCase() || "";
       const name = card.name.toLowerCase();
       const quantity = card.quantity || 1;
-      const isLand = type.includes("land");
+      const isLand = isLandCard(card);
 
       if (isLand) acc.lands += quantity;
       if (type.includes("creature")) acc.creatures += quantity;
@@ -1030,19 +1198,20 @@ function analyzeDeck(decklist?: DeckCard[]) {
   );
 
   const averageManaValue = nonLandCount > 0 ? Math.round((totalManaValue / nonLandCount) * 10) / 10 : 0;
-  let score = 10;
-  if (analysis.lands < 34) score -= 2;
-  if (analysis.lands > 39) score -= 1;
-  if (analysis.ramp < 8) score -= 1.5;
-  if (analysis.draw < 8) score -= 1.5;
-  if (analysis.removal < 6) score -= 1;
-  if (analysis.boardWipes < 2) score -= 1;
-  if (averageManaValue > 3.6) score -= 1;
+  const recommendations: string[] = [];
+
+  if (analysis.lands < 34) recommendations.push("Terrains bas : beaucoup de decks Commander jouent autour de 34 à 38 terrains.");
+  if (analysis.lands > 39) recommendations.push("Terrains hauts : vérifie que le deck ne manque pas d’action.");
+  if (analysis.ramp < 8) recommendations.push("Ramp bas : vise souvent 8 à 12 accélérateurs.");
+  if (analysis.draw < 8) recommendations.push("Pioche basse : vise souvent 8 à 12 sources d’avantage de cartes.");
+  if (analysis.removal < 6) recommendations.push("Interactions basses : vise souvent 6 à 10 removals ciblés.");
+  if (analysis.boardWipes < 2) recommendations.push("Wraths basses : 2 à 4 effets de nettoyage donnent plus de sécurité.");
+  if (averageManaValue > 3.6) recommendations.push("Courbe haute : le deck peut être lent sans beaucoup de ramp.");
 
   return {
     ...analysis,
     averageManaValue,
     totalPrice: Math.round(analysis.totalPrice * 100) / 100,
-    score: Math.max(0, Math.round(score * 10) / 10),
+    recommendations,
   };
 }
