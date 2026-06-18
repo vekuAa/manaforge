@@ -33,6 +33,7 @@ type Deck = {
   price: number;
   wins: number;
   losses: number;
+  is_public?: boolean;
   decklist?: DeckCard[];
 };
 
@@ -604,6 +605,28 @@ type ScryfallCard = {
     }
   }
 
+  async function toggleDeckPrivacy(deck: Deck) {
+  const nextValue = !deck.is_public;
+
+  setDecks((current) =>
+    current.map((item) =>
+      item.id === deck.id ? { ...item, is_public: nextValue } : item
+    )
+  );
+
+  if (!userId || typeof deck.id !== "string") return;
+
+  const { error } = await supabase
+    .from("decks")
+    .update({ is_public: nextValue })
+    .eq("user_id", userId)
+    .eq("id", deck.id);
+
+  if (error) {
+    setImportError(error.message);
+  }
+}
+
   if (!hasLoaded) {
     return (
       <main className="page">
@@ -694,9 +717,11 @@ type ScryfallCard = {
             onAddToCollection={() => void addDeckToCollection(selectedDeck)}
             onWin={() => void updateDeckStats(selectedDeck.id, "win")}
             onLoss={() => void updateDeckStats(selectedDeck.id, "loss")}
+              onTogglePrivacy={() => void toggleDeckPrivacy(selectedDeck)}
             onDelete={() => {
               if (window.confirm(`Supprimer le deck "${selectedDeck.name}" ?`)) void deleteDeck(selectedDeck.id);
             }}
+            
           />
         )}
       </section>
@@ -737,6 +762,7 @@ function DeckDetail({
   onWin,
   onLoss,
   onDelete,
+  onTogglePrivacy,
 }: {
   deck: Deck;
   analysis: ReturnType<typeof analyzeDeck>;
@@ -750,6 +776,7 @@ function DeckDetail({
   onWin: () => void;
   onLoss: () => void;
   onDelete: () => void;
+   onTogglePrivacy: () => void;
 }) {
   const categories = ["Toutes", "Terrains", "Créatures", "Artefacts", "Enchantements", "Éphémères", "Rituels", "Planeswalkers", "Autres"];
   const visibleCards = (deck.decklist || []).filter((card) => categoryFilter === "Toutes" || getDeckCardCategory(card) === categoryFilter);
@@ -780,7 +807,12 @@ function DeckDetail({
             <h2 className="mt-2 text-3xl font-black leading-tight">{deck.name}</h2>
             <p className="mt-1 font-bold text-accent">{deck.commander}</p>
             <p className="mt-2 text-sm text-muted">{deck.colors} · {deck.cards} cartes · {winrate}% WR</p>
-
+            <button
+  onClick={onTogglePrivacy}
+  className="mt-3 rounded-xl bg-white/10 px-4 py-2 text-sm font-black"
+>
+  {deck.is_public ? "🌍 Public" : "🔒 Privé"}
+</button>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <DeckMiniStat label="Prix deck" value={formatCurrency(analysis.totalPrice)} />
               <DeckMiniStat label="Note" value={`${analysis.score}/10`} />
