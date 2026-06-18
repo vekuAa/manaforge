@@ -40,6 +40,7 @@ type ScryfallCard = {
 
 type ScryfallSearchResponse = { data: ScryfallCard[]; has_more?: boolean; next_page?: string };
 type ScryfallAutocompleteResponse = { data?: string[] };
+type ScryfallCollectionResponse = { data?: ScryfallCard[] };
 type FolderSummary = {
   name: string;
   uniqueCards: number;
@@ -200,6 +201,7 @@ export default function CollectionPage() {
   const [scanStatus, setScanStatus] = useState("");
   const [scanResult, setScanResult] = useState<ScryfallCard | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [isRefreshingImages, setIsRefreshingImages] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const supabase = useMemo(() => createClient(), []);
@@ -220,6 +222,8 @@ export default function CollectionPage() {
       setName: row.set_name || undefined,
       setCode: row.set_code || undefined,
       collectorNumber: row.collector_number || undefined,
+      typeLine: undefined,
+      rarity: undefined,
       folder: folderName,
       language: row.language || "fr",
       foil: Boolean(row.foil),
@@ -722,6 +726,119 @@ export default function CollectionPage() {
     }
   }
 
+
+  async function refreshMissingCardImages(manual = false) {
+    const cardsWithoutImages = cards.filter((card) => !card.image && card.name.trim().length > 0);
+
+    if (cardsWithoutImages.length === 0) {
+      if (manual) setFolderSyncStatus("Toutes les cartes ont déjà une image.");
+      return;
+    }
+
+    try {
+      setIsRefreshingImages(true);
+      setError("");
+      setFolderSyncStatus(`Mise à jour des images : 0/${cardsWithoutImages.length}`);
+
+      const byName = new Map<string, ScryfallCard>();
+      const uniqueNames = Array.from(new Set(cardsWithoutImages.map((card) => card.name)));
+
+      for (let index = 0; index < uniqueNames.length; index += 75) {
+        const chunk = uniqueNames.slice(index, index + 75);
+        const response = await fetch("/api/scryfall/collection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cards: chunk.map((name) => ({ name })),
+          }),
+        });
+
+        if (!response.ok) continue;
+
+        const data = (await response.json()) as ScryfallCollectionResponse;
+        for (const foundCard of data.data ?? []) {
+          byName.set(foundCard.name.toLowerCase(), foundCard);
+        }
+      }
+
+      const updatedCards = cardsWithoutImages
+        .map((card) => {
+          const found = byName.get(card.name.toLowerCase());
+          const image = found ? getCardImage(found) : "";
+
+          if (!found || !image) return null;
+
+          return {
+            id: card.id,
+            patch: {
+              image,
+              setName: card.setName || found.set_name || undefined,
+              setCode: card.setCode || found.set || undefined,
+              collectorNumber: card.collectorNumber || found.collector_number || undefined,
+              rarity: card.rarity || found.rarity || undefined,
+              typeLine: card.typeLine || found.type_line || undefined,
+              price: card.price || getCardPrice(found, Boolean(card.foil)),
+            },
+            cloudPatch: {
+              image,
+              set_name: card.setName || found.set_name || null,
+              set_code: card.setCode || found.set || null,
+              collector_number: card.collectorNumber || found.collector_number || null,
+              price: card.price || getCardPrice(found, Boolean(card.foil)),
+            },
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+      if (updatedCards.length === 0) {
+        setFolderSyncStatus("Aucune image manquante retrouvée sur Scryfall.");
+        return;
+      }
+
+      setCards((current) =>
+        current.map((card) => {
+          const updated = updatedCards.find((item) => item.id === card.id);
+          return updated ? { ...card, ...updated.patch } : card;
+        }),
+      );
+
+      setSelectedCard((current) => {
+        if (!current) return current;
+        const updated = updatedCards.find((item) => item.id === current.id);
+        return updated ? { ...current, ...updated.patch } : current;
+      });
+
+      if (userId) {
+        for (const updated of updatedCards) {
+          if (typeof updated.id !== "string") continue;
+          const { error: updateError } = await supabase
+            .from("collection_cards")
+            .update(updated.cloudPatch)
+            .eq("user_id", userId)
+            .eq("id", updated.id);
+
+          if (updateError) console.error(updateError);
+        }
+      }
+
+      setFolderSyncStatus(`${updatedCards.length} image(s) de carte mise(s) à jour.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur pendant la mise à jour des images.");
+      setFolderSyncStatus("Mise à jour des images impossible pour le moment.");
+    } finally {
+      setIsRefreshingImages(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!hasLoaded || cards.length === 0 || isRefreshingImages) return;
+    const missingImages = cards.filter((card) => !card.image).length;
+    if (missingImages === 0) return;
+
+    void refreshMissingCardImages(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasLoaded, userId]);
+
   async function moveCardToFolder(id: string | number, nextFolder: string) {
     const cleanFolder = nextFolder === "Toutes" ? "Non classé" : nextFolder;
     const target = cards.find((card) => card.id === id);
@@ -972,6 +1089,8 @@ export default function CollectionPage() {
             onCreateFolder={() => setShowFolderModal(true)}
             onDeleteFolder={deleteFolder}
             onColorChange={(folder, color) => void updateFolderColor(folder, color)}
+            onRefreshImages={() => void refreshMissingCardImages(true)}
+            isRefreshingImages={isRefreshingImages}
             folderSyncStatus={folderSyncStatus}
           />
         ) : (
@@ -1154,6 +1273,8 @@ function CollectionHome({
   onCreateFolder,
   onDeleteFolder,
   onColorChange,
+  onRefreshImages,
+  isRefreshingImages,
   folderSyncStatus,
 }: {
   globalStats: { totalCards: number; uniqueCards: number; totalValue: number };
@@ -1178,6 +1299,8 @@ function CollectionHome({
   onCreateFolder: () => void;
   onDeleteFolder: (folder: string) => void;
   onColorChange: (folder: string, color: string) => void;
+  onRefreshImages: () => void;
+  isRefreshingImages: boolean;
   folderSyncStatus: string;
 }) {
   return (
@@ -1223,6 +1346,14 @@ function CollectionHome({
             <button onClick={onOpenAll} className="flex items-center justify-between rounded-xl bg-white/[0.08] px-4 py-3 font-black active:scale-[0.99]">
               <span>🗃️ Toutes les collections</span>
               <span className="text-white/50">›</span>
+            </button>
+            <button
+              onClick={onRefreshImages}
+              disabled={isRefreshingImages}
+              className="flex items-center justify-between rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-left text-sm font-black text-white/80 active:scale-[0.99] disabled:opacity-50"
+            >
+              <span>{isRefreshingImages ? "🔄 Mise à jour des images..." : "🖼️ Mettre à jour les images manquantes"}</span>
+              <span className="text-white/50">↻</span>
             </button>
           </div>
 
@@ -2326,4 +2457,3 @@ function FullsetAddModal({
     </div>
   );
 }
-
