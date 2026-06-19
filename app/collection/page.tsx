@@ -1928,12 +1928,40 @@ function FolderView({
         <button className="rounded-xl bg-black/25 px-4 text-white/80">≡</button>
       </div>
 
-      <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
-        <select value={setFilter} onChange={(event) => setSetFilter(event.target.value)} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm font-bold text-white outline-none">
-          {extensions.map((extension) => <option key={extension} value={extension}>{extension}</option>)}
-        </select>
-        <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
-      </div>
+   <div className="mt-3 grid gap-2">
+  <div className="grid grid-cols-[1fr_auto] gap-2">
+    <select
+      value={setFilter}
+      onChange={(event) => setSetFilter(event.target.value)}
+      className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm font-bold text-white outline-none"
+    >
+      {extensions.map((extension) => (
+        <option key={extension} value={extension}>
+          {extension}
+        </option>
+      ))}
+    </select>
+
+    <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
+  </div>
+
+  <div className="flex gap-2 overflow-x-auto pb-1">
+    {extensions.slice(0, 14).map((extension) => (
+      <button
+        key={extension}
+        type="button"
+        onClick={() => setSetFilter(extension)}
+        className={`shrink-0 rounded-full border px-3 py-2 text-xs font-black ${
+          setFilter === extension
+            ? "border-[#f59e0b] bg-[#f59e0b] text-black"
+            : "border-white/10 bg-black/25 text-white/60"
+        }`}
+      >
+        {extension === "Toutes" ? "Toutes" : extension}
+      </button>
+    ))}
+  </div>
+</div>
 
       <div className="mt-4 grid grid-cols-3 gap-2">
         <MiniStat label="Cartes" value={stats.totalCards} />
