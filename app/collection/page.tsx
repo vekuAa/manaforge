@@ -202,6 +202,16 @@ export default function CollectionPage() {
   const [scanResult, setScanResult] = useState<ScryfallCard | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isRefreshingImages, setIsRefreshingImages] = useState(false);
+
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedCardIds, setSelectedCardIds] = useState<Array<string | number>>([]);
+  const [bulkMoveFolder, setBulkMoveFolder] = useState("Non classé");
+
+  const [printEditCard, setPrintEditCard] = useState<CollectionCard | null>(null);
+  const [printEditOptions, setPrintEditOptions] = useState<ScryfallCard[]>([]);
+  const [selectedEditPrintId, setSelectedEditPrintId] = useState("");
+  const [isLoadingEditPrints, setIsLoadingEditPrints] = useState(false);
+
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const supabase = useMemo(() => createClient(), []);
@@ -875,6 +885,150 @@ export default function CollectionPage() {
     setFolderSyncStatus(`Carte déplacée vers ${cleanFolder}.`);
   }
 
+  function toggleCardSelection(id: string | number) {
+    setSelectedCardIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  }
+
+  function clearSelection() {
+    setSelectedCardIds([]);
+    setSelectionMode(false);
+  }
+
+  async function moveSelectedCardsToFolder(nextFolder: string) {
+    const cleanFolder = nextFolder === "Toutes" ? "Non classé" : nextFolder;
+    if (selectedCardIds.length === 0) return;
+
+    const previousCards = cards;
+    const selectedIds = selectedCardIds;
+
+    setCards((current) =>
+      current.map((card) =>
+        selectedIds.includes(card.id) ? { ...card, folder: cleanFolder } : card,
+      ),
+    );
+
+    setSelectedCardIds([]);
+    setSelectionMode(false);
+
+    if (!userId) {
+      setFolderSyncStatus(`${selectedIds.length} carte(s) déplacée(s) vers ${cleanFolder}.`);
+      return;
+    }
+
+    const stringIds = selectedIds.filter((id): id is string => typeof id === "string");
+
+    if (stringIds.length > 0) {
+      const { error: updateError } = await supabase
+        .from("collection_cards")
+        .update({ folder_id: getFolderIdByName(cleanFolder) })
+        .eq("user_id", userId)
+        .in("id", stringIds);
+
+      if (updateError) {
+        setCards(previousCards);
+        setSelectedCardIds(selectedIds);
+        setSelectionMode(true);
+        setError(updateError.message);
+        return;
+      }
+    }
+
+    setFolderSyncStatus(`${selectedIds.length} carte(s) déplacée(s) vers ${cleanFolder}.`);
+  }
+
+  async function openPrintEditor(card: CollectionCard) {
+    try {
+      setPrintEditCard(card);
+      setPrintEditOptions([]);
+      setSelectedEditPrintId("");
+      setIsLoadingEditPrints(true);
+      setError("");
+
+      let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${card.name}" unique:prints`)}&order=released`;
+      const allPrints: ScryfallCard[] = [];
+
+      while (url && allPrints.length < 300) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Aucune autre édition trouvée sur Scryfall.");
+        const data = (await response.json()) as ScryfallSearchResponse;
+        allPrints.push(...data.data);
+        url = data.has_more && data.next_page ? data.next_page : "";
+      }
+
+      setPrintEditOptions(allPrints);
+      setSelectedEditPrintId(allPrints[0]?.id ?? "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de charger les éditions.");
+    } finally {
+      setIsLoadingEditPrints(false);
+    }
+  }
+
+  async function applySelectedPrintToCard() {
+    if (!printEditCard) return;
+
+    const selectedPrint = printEditOptions.find((card) => card.id === selectedEditPrintId);
+    if (!selectedPrint) {
+      setError("Choisis une édition.");
+      return;
+    }
+
+    const image = getCardImage(selectedPrint);
+    const price = getCardPrice(selectedPrint, Boolean(printEditCard.foil));
+
+    const localPatch: Partial<CollectionCard> = {
+      image,
+      setName: selectedPrint.set_name || "Extension inconnue",
+      setCode: selectedPrint.set || "",
+      collectorNumber: selectedPrint.collector_number || "",
+      rarity: selectedPrint.rarity || "unknown",
+      typeLine: selectedPrint.type_line || "",
+      price,
+    };
+
+    const previousCards = cards;
+    const previousSelectedCard = selectedCard;
+
+    setCards((current) =>
+      current.map((card) =>
+        card.id === printEditCard.id ? { ...card, ...localPatch } : card,
+      ),
+    );
+
+    setSelectedCard((current) =>
+      current && current.id === printEditCard.id ? { ...current, ...localPatch } : current,
+    );
+
+    if (userId && typeof printEditCard.id === "string") {
+      const { error: updateError } = await supabase
+        .from("collection_cards")
+        .update({
+          scryfall_id: selectedPrint.id,
+          image: image || null,
+          set_name: selectedPrint.set_name || null,
+          set_code: selectedPrint.set || null,
+          collector_number: selectedPrint.collector_number || null,
+          price,
+        })
+        .eq("user_id", userId)
+        .eq("id", printEditCard.id);
+
+      if (updateError) {
+        setCards(previousCards);
+        setSelectedCard(previousSelectedCard);
+        setError(updateError.message);
+        return;
+      }
+    }
+
+    setFolderSyncStatus(`Édition mise à jour : ${selectedPrint.set_name || selectedPrint.set?.toUpperCase() || "extension"}.`);
+    setPrintEditCard(null);
+    setPrintEditOptions([]);
+    setSelectedEditPrintId("");
+  }
+
   async function updateQuantity(id: string | number, amount: number) {
     const target = cards.find((card) => card.id === id);
     if (!target) return;
@@ -1102,6 +1256,7 @@ export default function CollectionPage() {
             search={search}
             setSearch={setSearch}
             extensions={extensions}
+            folders={folders}
             setFilter={setFilter}
             setSetFilter={setSetFilter}
             viewMode={viewMode}
@@ -1119,6 +1274,17 @@ export default function CollectionPage() {
             onPlus={(id) => void updateQuantity(id, 1)}
             onDelete={(id) => void deleteCard(id)}
             onOpenCard={setSelectedCard}
+            selectionMode={selectionMode}
+            selectedCardIds={selectedCardIds}
+            bulkMoveFolder={bulkMoveFolder}
+            setBulkMoveFolder={setBulkMoveFolder}
+            onToggleSelectionMode={() => {
+              setSelectionMode((current) => !current);
+              setSelectedCardIds([]);
+            }}
+            onToggleSelect={toggleCardSelection}
+            onBulkMove={(folder) => void moveSelectedCardsToFolder(folder)}
+            onClearSelection={clearSelection}
           />
         )}
       </section>
@@ -1224,7 +1390,24 @@ export default function CollectionPage() {
           card={selectedCard}
           folders={folders}
           onMove={(folder) => void moveCardToFolder(selectedCard.id, folder)}
+          onEditPrint={() => void openPrintEditor(selectedCard)}
           onClose={() => setSelectedCard(null)}
+        />
+      )}
+
+      {printEditCard && (
+        <PrintEditModal
+          card={printEditCard}
+          printOptions={printEditOptions}
+          selectedPrintId={selectedEditPrintId}
+          setSelectedPrintId={setSelectedEditPrintId}
+          isLoading={isLoadingEditPrints}
+          onClose={() => {
+            setPrintEditCard(null);
+            setPrintEditOptions([]);
+            setSelectedEditPrintId("");
+          }}
+          onConfirm={() => void applySelectedPrintToCard()}
         />
       )}
 
@@ -1672,6 +1855,7 @@ function FolderView({
   search,
   setSearch,
   extensions,
+  folders,
   setFilter,
   setSetFilter,
   viewMode,
@@ -1683,6 +1867,14 @@ function FolderView({
   onPlus,
   onDelete,
   onOpenCard,
+  selectionMode,
+  selectedCardIds,
+  bulkMoveFolder,
+  setBulkMoveFolder,
+  onToggleSelectionMode,
+  onToggleSelect,
+  onBulkMove,
+  onClearSelection,
 }: {
   folder: string;
   summary?: FolderSummary;
@@ -1691,6 +1883,7 @@ function FolderView({
   search: string;
   setSearch: (value: string) => void;
   extensions: string[];
+  folders: string[];
   setFilter: string;
   setSetFilter: (value: string) => void;
   viewMode: "grid" | "list";
@@ -1702,6 +1895,14 @@ function FolderView({
   onPlus: (id: string | number) => void;
   onDelete: (id: string | number) => void;
   onOpenCard: (card: CollectionCard) => void;
+  selectionMode: boolean;
+  selectedCardIds: Array<string | number>;
+  bulkMoveFolder: string;
+  setBulkMoveFolder: (value: string) => void;
+  onToggleSelectionMode: () => void;
+  onToggleSelect: (id: string | number) => void;
+  onBulkMove: (folder: string) => void;
+  onClearSelection: () => void;
 }) {
   return (
     <>
@@ -1745,14 +1946,94 @@ function FolderView({
         <button onClick={onScan} className="flex-1 rounded-xl bg-[#f59e0b] px-4 py-3 font-black text-black">⛶ Scanner</button>
       </div>
 
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onToggleSelectionMode}
+            className={`rounded-xl px-4 py-2 text-sm font-black ${selectionMode ? "bg-[#f59e0b] text-black" : "bg-black/25 text-white/75"}`}
+          >
+            {selectionMode ? "Quitter sélection" : "Sélection multiple"}
+          </button>
+
+          {selectionMode && (
+            <button
+              type="button"
+              onClick={onClearSelection}
+              className="rounded-xl bg-black/25 px-4 py-2 text-sm font-black text-white/60"
+            >
+              Annuler
+            </button>
+          )}
+        </div>
+
+        {selectionMode && (
+          <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+            <select
+              value={bulkMoveFolder}
+              onChange={(event) => setBulkMoveFolder(event.target.value)}
+              className="rounded-xl border border-white/10 bg-[#101116] px-3 py-3 text-sm font-black text-white outline-none"
+            >
+              {folders
+                .filter((folderName) => folderName !== "Toutes")
+                .map((folderName) => (
+                  <option key={folderName} value={folderName}>
+                    {folderName}
+                  </option>
+                ))}
+            </select>
+
+            <button
+              type="button"
+              disabled={selectedCardIds.length === 0}
+              onClick={() => onBulkMove(bulkMoveFolder)}
+              className="rounded-xl bg-[#f59e0b] px-4 py-3 text-sm font-black text-black disabled:opacity-40"
+            >
+              Déplacer {selectedCardIds.length > 0 ? `(${selectedCardIds.length})` : ""}
+            </button>
+          </div>
+        )}
+      </div>
+
       <div className={viewMode === "grid" ? "mt-5 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5" : "mt-5 grid gap-3"}>
         {cards.length === 0 ? (
           <div className="col-span-full rounded-2xl border border-white/10 bg-white/[0.05] p-6 text-center text-white/60">Ce dossier est vide.</div>
-        ) : cards.map((card) => viewMode === "grid" ? (
-          <CardTile key={card.id} card={card} onOpen={() => onOpenCard(card)} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
-        ) : (
-          <CardRow key={card.id} card={card} onOpen={() => onOpenCard(card)} onMinus={() => onMinus(card.id)} onPlus={() => onPlus(card.id)} onDelete={() => onDelete(card.id)} />
-        ))}
+        ) : cards.map((card) => {
+          const selected = selectedCardIds.includes(card.id);
+          const handleOpen = () => {
+            if (selectionMode) {
+              onToggleSelect(card.id);
+              return;
+            }
+            onOpenCard(card);
+          };
+
+          return viewMode === "grid" ? (
+            <CardTile
+              key={card.id}
+              card={card}
+              selected={selected}
+              selectionMode={selectionMode}
+              onSelect={() => onToggleSelect(card.id)}
+              onOpen={handleOpen}
+              onMinus={() => onMinus(card.id)}
+              onPlus={() => onPlus(card.id)}
+              onDelete={() => onDelete(card.id)}
+            />
+          ) : (
+            <CardRow
+              key={card.id}
+              card={card}
+              selected={selected}
+              selectionMode={selectionMode}
+              onSelect={() => onToggleSelect(card.id)}
+              onOpen={handleOpen}
+              onMinus={() => onMinus(card.id)}
+              onPlus={() => onPlus(card.id)}
+              onDelete={() => onDelete(card.id)}
+            />
+          );
+        })}
       </div>
     </>
   );
@@ -1769,19 +2050,35 @@ function ViewToggle({ viewMode, setViewMode }: { viewMode: "grid" | "list"; setV
 
 function CardTile({
   card,
+  selected,
+  selectionMode,
+  onSelect,
   onOpen,
   onMinus,
   onPlus,
   onDelete,
 }: {
   card: CollectionCard;
+  selected: boolean;
+  selectionMode: boolean;
+  onSelect: () => void;
   onOpen: () => void;
   onMinus: () => void;
   onPlus: () => void;
   onDelete: () => void;
 }) {
   return (
-    <div className="group relative overflow-hidden rounded-xl bg-white/[0.05] p-1.5">
+    <div className={`group relative overflow-hidden rounded-xl p-1.5 ${selected ? "bg-[#f59e0b]/20 ring-2 ring-[#f59e0b]" : "bg-white/[0.05]"}`}>
+      {selectionMode && (
+        <button
+          type="button"
+          onClick={onSelect}
+          className={`absolute left-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-black ${selected ? "border-[#f59e0b] bg-[#f59e0b] text-black" : "border-white/30 bg-black/65 text-white"}`}
+          aria-label={selected ? "Désélectionner" : "Sélectionner"}
+        >
+          {selected ? "✓" : ""}
+        </button>
+      )}
       <button type="button" onClick={onOpen} className="w-full text-left transition active:scale-[0.98]">
         {card.image ? (
           <img src={card.image} alt={card.name} className="aspect-[63/88] w-full rounded-lg object-cover shadow-lg" />
@@ -1807,19 +2104,35 @@ function CardTile({
 
 function CardRow({
   card,
+  selected,
+  selectionMode,
+  onSelect,
   onOpen,
   onMinus,
   onPlus,
   onDelete,
 }: {
   card: CollectionCard;
+  selected: boolean;
+  selectionMode: boolean;
+  onSelect: () => void;
   onOpen: () => void;
   onMinus: () => void;
   onPlus: () => void;
   onDelete: () => void;
 }) {
   return (
-    <div className="flex w-full min-w-0 gap-3 rounded-xl border border-white/10 bg-white/[0.055] p-3">
+    <div className={`flex w-full min-w-0 gap-3 rounded-xl border p-3 ${selected ? "border-[#f59e0b] bg-[#f59e0b]/15" : "border-white/10 bg-white/[0.055]"}`}>
+      {selectionMode && (
+        <button
+          type="button"
+          onClick={onSelect}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-full border text-xs font-black ${selected ? "border-[#f59e0b] bg-[#f59e0b] text-black" : "border-white/30 bg-black/35 text-white"}`}
+          aria-label={selected ? "Désélectionner" : "Sélectionner"}
+        >
+          {selected ? "✓" : ""}
+        </button>
+      )}
       <button type="button" onClick={onOpen} className="shrink-0 transition active:scale-95">
         {card.image ? <img src={card.image} alt={card.name} className="h-20 w-14 rounded-lg object-cover" /> : <div className="flex h-20 w-14 items-center justify-center rounded-lg bg-black/30 text-2xl">🎴</div>}
       </button>
@@ -1847,11 +2160,13 @@ function CardDetailModal({
   card,
   folders,
   onMove,
+  onEditPrint,
   onClose,
 }: {
   card: CollectionCard;
   folders: string[];
   onMove: (folder: string) => void;
+  onEditPrint: () => void;
   onClose: () => void;
 }) {
   const totalPrice = Number(card.price || 0) * Number(card.quantity || 1);
@@ -1908,6 +2223,14 @@ function CardDetailModal({
               </select>
             </div>
 
+            <button
+              type="button"
+              onClick={onEditPrint}
+              className="mt-4 w-full rounded-2xl border border-white/10 bg-white/[0.075] px-4 py-4 text-sm font-black text-white"
+            >
+              🖨️ Changer l’édition / extension
+            </button>
+
             <div className="mt-5 grid grid-cols-2 gap-3">
               <InfoBox label="Prix unité" value={formatCurrency(card.price || 0, 2)} />
               <InfoBox label="Total" value={formatCurrency(totalPrice, 2)} />
@@ -1924,6 +2247,102 @@ function CardDetailModal({
     </div>
   );
 }
+
+function PrintEditModal({
+  card,
+  printOptions,
+  selectedPrintId,
+  setSelectedPrintId,
+  isLoading,
+  onClose,
+  onConfirm,
+}: {
+  card: CollectionCard;
+  printOptions: ScryfallCard[];
+  selectedPrintId: string;
+  setSelectedPrintId: (value: string) => void;
+  isLoading: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const selectedPrint = printOptions.find((item) => item.id === selectedPrintId) || printOptions[0];
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
+      <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-white/10 bg-[#17181f] p-5 text-white shadow-2xl sm:rounded-3xl">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">Édition</p>
+            <h2 className="mt-1 text-2xl font-black">Changer l’extension</h2>
+            <p className="mt-1 text-sm font-bold text-white/45">{card.name}</p>
+          </div>
+          <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 font-black">✕</button>
+        </div>
+
+        {isLoading ? (
+          <div className="mt-5 rounded-2xl bg-black/25 p-6 text-center font-bold text-white/60">
+            Chargement des impressions Scryfall...
+          </div>
+        ) : printOptions.length === 0 ? (
+          <div className="mt-5 rounded-2xl bg-red-500/10 p-4 text-sm font-bold text-red-200">
+            Aucune édition trouvée.
+          </div>
+        ) : (
+          <>
+            <div className="mt-5 grid gap-4 sm:grid-cols-[140px_1fr]">
+              <div>
+                {selectedPrint && getCardImage(selectedPrint) ? (
+                  <img
+                    src={getCardImage(selectedPrint)}
+                    alt={selectedPrint.name}
+                    className="mx-auto aspect-[63/88] w-full max-w-[180px] rounded-2xl object-cover shadow-2xl"
+                  />
+                ) : (
+                  <div className="flex aspect-[63/88] items-center justify-center rounded-2xl bg-black/30 text-4xl">🎴</div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-black uppercase tracking-wider text-white/45">
+                  Nouvelle impression
+                </label>
+                <select
+                  value={selectedPrintId}
+                  onChange={(event) => setSelectedPrintId(event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm font-black text-white outline-none"
+                >
+                  {printOptions.map((print) => (
+                    <option key={print.id} value={print.id}>
+                      {print.set_name} · {print.set?.toUpperCase()} #{print.collector_number} · {print.rarity}
+                    </option>
+                  ))}
+                </select>
+
+                {selectedPrint && (
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <InfoBox label="Set" value={selectedPrint.set?.toUpperCase() || "N/A"} />
+                    <InfoBox label="Numéro" value={selectedPrint.collector_number || "N/A"} />
+                    <InfoBox label="Rareté" value={selectedPrint.rarity || "N/A"} />
+                    <InfoBox label="Prix" value={formatCurrency(getCardPrice(selectedPrint, Boolean(card.foil)), 2)} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onConfirm}
+              className="mt-5 w-full rounded-2xl bg-[#f59e0b] px-4 py-4 font-black text-black"
+            >
+              Appliquer cette édition
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function InfoBox({ label, value }: { label: string; value: string }) {
   return (

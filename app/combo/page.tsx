@@ -3,29 +3,38 @@
 
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dices, RefreshCw, Search, Sparkles, Star, Zap } from "lucide-react";
 
 type Combo = {
-  id: number | null;
+  id: string;
   status: string;
   identity: string;
   uses: string[];
   produces: string[];
   cards: string[];
+  url?: string;
+};
+
+type ComboApiResponse = {
+  combos?: Combo[];
+  error?: string;
 };
 
 function getScryfallImageUrl(cardName: string) {
   return `/api/scryfall/image?name=${encodeURIComponent(cardName)}`;
 }
 
+function getComboTitle(combo: Combo) {
+  if (combo.cards.length === 0) return `Combo ${combo.id}`;
+  return combo.cards.join(" + ");
+}
+
 export default function ComboPage() {
   const [combos, setCombos] = useState<Combo[]>([]);
   const [comboIndex, setComboIndex] = useState(0);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "mana" | "draw" | "damage">(
-    "all",
-  );
+  const [filter, setFilter] = useState<"all" | "mana" | "draw" | "damage">("all");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -34,11 +43,8 @@ export default function ComboPage() {
       setIsLoading(true);
       setError("");
 
-      const response = await fetch("/api/combo", {
-        cache: "no-store",
-      });
-
-      const data = await response.json();
+      const response = await fetch("/api/combo", { cache: "no-store" });
+      const data = (await response.json()) as ComboApiResponse;
 
       if (!response.ok) {
         throw new Error(data.error || "Impossible de charger les combos.");
@@ -48,12 +54,14 @@ export default function ComboPage() {
 
       setCombos(nextCombos);
       setComboIndex(0);
+
+      if (nextCombos.length === 0) {
+        setError("Aucune combo reçue depuis Commander Spellbook.");
+      }
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Erreur pendant le chargement des combos.",
-      );
+      setCombos([]);
+      setComboIndex(0);
+      setError(err instanceof Error ? err.message : "Erreur pendant le chargement des combos.");
     } finally {
       setIsLoading(false);
     }
@@ -68,31 +76,37 @@ export default function ComboPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredCombos = combos.filter((combo) => {
-    const haystack = [
-      ...combo.cards,
-      ...combo.uses,
-      ...combo.produces,
-      combo.identity,
-      combo.status,
-    ]
-      .join(" ")
-      .toLowerCase();
+  const filteredCombos = useMemo(() => {
+    return combos.filter((combo) => {
+      const haystack = [
+        ...combo.cards,
+        ...combo.uses,
+        ...combo.produces,
+        combo.identity,
+        combo.status,
+      ]
+        .join(" ")
+        .toLowerCase();
 
-    const matchesSearch =
-      !search.trim() || haystack.includes(search.trim().toLowerCase());
+      const matchesSearch =
+        !search.trim() || haystack.includes(search.trim().toLowerCase());
 
-    const matchesFilter =
-      filter === "all" ||
-      (filter === "mana" && haystack.includes("mana")) ||
-      (filter === "draw" && haystack.includes("draw")) ||
-      (filter === "damage" &&
-        (haystack.includes("damage") || haystack.includes("life")));
+      const matchesFilter =
+        filter === "all" ||
+        (filter === "mana" && haystack.includes("mana")) ||
+        (filter === "draw" && haystack.includes("draw")) ||
+        (filter === "damage" &&
+          (haystack.includes("damage") ||
+            haystack.includes("life") ||
+            haystack.includes("lifegain") ||
+            haystack.includes("lifeloss")));
 
-    return matchesSearch && matchesFilter;
-  });
+      return matchesSearch && matchesFilter;
+    });
+  }, [combos, filter, search]);
 
-  const activeCombo = filteredCombos[comboIndex] || filteredCombos[0];
+  const safeComboIndex = filteredCombos.length === 0 ? 0 : comboIndex % filteredCombos.length;
+  const activeCombo = filteredCombos[safeComboIndex];
 
   function nextCombo() {
     setComboIndex((current) => {
@@ -128,8 +142,7 @@ export default function ComboPage() {
               </h1>
 
               <p className="mt-3 max-w-2xl text-sm font-bold leading-relaxed text-white/55">
-                Explore des combos Commander depuis Commander Spellbook, avec
-                images Scryfall et filtres rapides.
+                Explore des combos Commander depuis Commander Spellbook, avec visuels Scryfall.
               </p>
             </div>
 
@@ -140,7 +153,7 @@ export default function ComboPage() {
               className="inline-flex items-center gap-2 rounded-2xl bg-[#f59e0b] px-5 py-3 font-black text-black disabled:opacity-50"
             >
               <RefreshCw size={18} />
-              {isLoading ? "Chargement..." : "Nouvelles combos"}
+              {isLoading ? "Chargement..." : "Recharger"}
             </button>
           </div>
 
@@ -153,24 +166,16 @@ export default function ComboPage() {
                   setSearch(event.target.value);
                   setComboIndex(0);
                 }}
-                placeholder="Rechercher une carte, un effet, mana, draw..."
+                placeholder="Rechercher une carte, mana, draw, life..."
                 className="w-full bg-transparent text-sm font-bold outline-none placeholder:text-white/35"
               />
             </label>
 
             <div className="flex gap-2 overflow-x-auto">
-              <FilterButton active={filter === "all"} onClick={() => changeFilter("all")}>
-                Tout
-              </FilterButton>
-              <FilterButton active={filter === "mana"} onClick={() => changeFilter("mana")}>
-                Mana
-              </FilterButton>
-              <FilterButton active={filter === "draw"} onClick={() => changeFilter("draw")}>
-                Pioche
-              </FilterButton>
-              <FilterButton active={filter === "damage"} onClick={() => changeFilter("damage")}>
-                Damage/Life
-              </FilterButton>
+              <FilterButton active={filter === "all"} onClick={() => changeFilter("all")}>Tout</FilterButton>
+              <FilterButton active={filter === "mana"} onClick={() => changeFilter("mana")}>Mana</FilterButton>
+              <FilterButton active={filter === "draw"} onClick={() => changeFilter("draw")}>Pioche</FilterButton>
+              <FilterButton active={filter === "damage"} onClick={() => changeFilter("damage")}>Damage/Life</FilterButton>
             </div>
           </div>
         </header>
@@ -183,8 +188,8 @@ export default function ComboPage() {
         )}
 
         <section className="mt-6 grid gap-4 md:grid-cols-4">
-          <ComboStat icon={<Zap size={22} />} label="Combos chargées" value={combos.length} />
-          <ComboStat icon={<Sparkles size={22} />} label="Résultats filtrés" value={filteredCombos.length} />
+          <ComboStat icon={<Zap size={22} />} label="Chargées" value={combos.length} />
+          <ComboStat icon={<Sparkles size={22} />} label="Filtrées" value={filteredCombos.length} />
           <ComboStat icon={<Star size={22} />} label="Favoris" value="Bientôt" />
           <ComboStat icon={<Dices size={22} />} label="Mode deck" value="V2" />
         </section>
@@ -202,25 +207,23 @@ export default function ComboPage() {
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.2em] text-[#f59e0b]">
-                    Combo #{activeCombo.id ?? "?"}
+                    Combo #{activeCombo.id}
                   </p>
 
                   <h2 className="mt-2 text-2xl font-black">
-                    {activeCombo.cards.length > 0
-                      ? activeCombo.cards.join(" + ")
-                      : "Combo sans cartes retournées"}
+                    {getComboTitle(activeCombo)}
                   </h2>
 
                   <p className="mt-2 text-sm font-bold text-white/45">
-                    Identité : {activeCombo.identity || "N/A"} · Statut :{" "}
-                    {activeCombo.status}
+                    Identité : {activeCombo.identity || "N/A"} · Statut : {activeCombo.status}
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={nextCombo}
-                  className="rounded-2xl bg-[#f59e0b] px-5 py-3 font-black text-black"
+                  disabled={filteredCombos.length <= 1}
+                  className="rounded-2xl bg-[#f59e0b] px-5 py-3 font-black text-black disabled:opacity-40"
                 >
                   🎲 Combo suivante
                 </button>
@@ -234,21 +237,25 @@ export default function ComboPage() {
                 </p>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {activeCombo.cards.map((cardName) => (
-                    <div
-                      key={cardName}
-                      className="overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-2"
-                    >
-                      <img
-                        src={getScryfallImageUrl(cardName)}
-                        alt={cardName}
-                        className="aspect-[63/88] w-full rounded-xl object-cover"
-                      />
-                      <p className="mt-2 truncate text-xs font-black">
-                        {cardName}
-                      </p>
+                  {activeCombo.cards.length > 0 ? (
+                    activeCombo.cards.map((cardName) => (
+                      <div
+                        key={cardName}
+                        className="overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-2"
+                      >
+                        <img
+                          src={getScryfallImageUrl(cardName)}
+                          alt={cardName}
+                          className="aspect-[63/88] w-full rounded-xl object-cover"
+                        />
+                        <p className="mt-2 truncate text-xs font-black">{cardName}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="col-span-full rounded-2xl bg-black/25 p-5 text-sm font-bold text-white/45">
+                      Aucune carte retournée pour cette combo.
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
 
@@ -256,15 +263,16 @@ export default function ComboPage() {
                 <InfoPanel title="Utilise / nécessite" items={activeCombo.uses} empty="Non précisé." />
                 <InfoPanel title="Produit" items={activeCombo.produces} empty="Non précisé." />
 
-                <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                  <p className="text-xs font-black uppercase tracking-wider text-[#f59e0b]">
-                    Prochaine étape
-                  </p>
-                  <p className="mt-2 text-sm font-bold leading-relaxed text-white/55">
-                    La V2 analysera tes decks et indiquera les combos complètes,
-                    les combos à une carte près et les pièces manquantes.
-                  </p>
-                </div>
+                {activeCombo.url && (
+                  <a
+                    href={activeCombo.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm font-black text-[#f59e0b]"
+                  >
+                    Ouvrir sur Commander Spellbook →
+                  </a>
+                )}
               </div>
             </div>
           </section>
@@ -275,7 +283,7 @@ export default function ComboPage() {
             <p className="text-5xl">⚡</p>
             <h2 className="mt-4 text-2xl font-black">Aucune combo trouvée</h2>
             <p className="mt-2 font-bold text-white/45">
-              Modifie tes filtres ou recharge de nouvelles combos.
+              Modifie les filtres ou clique sur Recharger.
             </p>
           </section>
         )}
@@ -285,8 +293,7 @@ export default function ComboPage() {
             Source
           </p>
           <p className="mt-2 text-sm font-bold leading-relaxed text-white/55">
-            Données combos issues de Commander Spellbook. Les visuels de cartes
-            sont récupérés via Scryfall.
+            Données combos issues de Commander Spellbook. Images récupérées via Scryfall.
           </p>
         </section>
       </section>
