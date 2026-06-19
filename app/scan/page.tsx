@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import Link from "next/link";
@@ -16,6 +17,11 @@ type ScannedCard = {
   price: number;
 };
 
+type FolderRow = {
+  id: string;
+  name: string;
+};
+
 type CvLike = any;
 
 export default function ScanPage() {
@@ -26,54 +32,48 @@ export default function ScanPage() {
 
   const supabase = useMemo(() => createClient(), []);
 
+  const [folders, setFolders] = useState<FolderRow[]>([]);
   const [scannedCards, setScannedCards] = useState<ScannedCard[]>([]);
   const [selectedFolder, setSelectedFolder] = useState("Non classé");
   const [isScanning, setIsScanning] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [status, setStatus] = useState("Chargement du moteur de détection...");
 
-  useEffect(() => {
-    let cancelled = false;
+  function drawDetectedContour(
+    approx: CvLike,
+    video: HTMLVideoElement,
+    canvas: HTMLCanvasElement,
+    ctx: CanvasRenderingContext2D,
+  ) {
+    const scaleX = canvas.width / video.videoWidth;
+    const scaleY = canvas.height / video.videoHeight;
 
-    async function loadOpenCv() {
-      try {
-        const module = await import("@techstark/opencv-js");
-        const cv = module.default || module;
+    const points: { x: number; y: number }[] = [];
 
-        const ready = () => {
-          if (cancelled) return;
-          cvRef.current = cv;
-          setStatus("Place une carte dans le cadre. Le contour blanc apparaît quand elle est détectée.");
-          startDetectionLoop();
-        };
-
-        if (cv.Mat) {
-          ready();
-        } else {
-          cv.onRuntimeInitialized = ready;
-        }
-      } catch {
-        setStatus("OpenCV indisponible. Vérifie npm install @techstark/opencv-js.");
-      }
+    for (let index = 0; index < approx.rows; index += 1) {
+      points.push({
+        x: approx.intPtr(index, 0)[0] * scaleX,
+        y: approx.intPtr(index, 0)[1] * scaleY,
+      });
     }
 
-    void loadOpenCv();
+    if (points.length !== 4) return;
 
-    return () => {
-      cancelled = true;
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, []);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "white";
+    ctx.shadowColor = "rgba(245,158,11,0.9)";
+    ctx.shadowBlur = 18;
 
-  function startDetectionLoop() {
-    function loop() {
-      detectCardContour();
-      animationRef.current = requestAnimationFrame(loop);
-    }
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
 
-    animationRef.current = requestAnimationFrame(loop);
+    points.slice(1).forEach((point) => {
+      ctx.lineTo(point.x, point.y);
+    });
+
+    ctx.closePath();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
   function detectCardContour() {
@@ -81,7 +81,9 @@ export default function ScanPage() {
     const video = webcamRef.current?.video;
     const canvas = overlayRef.current;
 
-    if (!cv || !video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
+    if (!cv || !video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
+      return;
+    }
 
     canvas.width = video.clientWidth;
     canvas.height = video.clientHeight;
@@ -100,12 +102,12 @@ export default function ScanPage() {
 
     tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
 
-    let src;
-    let gray;
-    let blurred;
-    let edges;
-    let contours;
-    let hierarchy;
+    let src: CvLike;
+    let gray: CvLike;
+    let blurred: CvLike;
+    let edges: CvLike;
+    let contours: CvLike;
+    let hierarchy: CvLike;
 
     try {
       src = cv.imread(tempCanvas);
@@ -120,11 +122,11 @@ export default function ScanPage() {
       cv.Canny(blurred, edges, 60, 160);
       cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      let bestApprox = null;
+      let bestApprox: CvLike | null = null;
       let bestArea = 0;
 
-      for (let i = 0; i < contours.size(); i += 1) {
-        const contour = contours.get(i);
+      for (let index = 0; index < contours.size(); index += 1) {
+        const contour = contours.get(index);
         const perimeter = cv.arcLength(contour, true);
         const approx = new cv.Mat();
 
@@ -157,7 +159,7 @@ export default function ScanPage() {
         bestApprox.delete();
       }
     } catch {
-      // On évite de casser la caméra si OpenCV rate une frame.
+      // On ignore les frames ratées pour ne pas casser la caméra.
     } finally {
       src?.delete();
       gray?.delete();
@@ -168,49 +170,87 @@ export default function ScanPage() {
     }
   }
 
-  function drawDetectedContour(
-    approx: CvLike,
-    video: HTMLVideoElement,
-    canvas: HTMLCanvasElement,
-    ctx: CanvasRenderingContext2D,
-  ) {
-    const scaleX = canvas.width / video.videoWidth;
-    const scaleY = canvas.height / video.videoHeight;
-
-    const points: { x: number; y: number }[] = [];
-
-    for (let i = 0; i < approx.rows; i += 1) {
-      points.push({
-        x: approx.intPtr(i, 0)[0] * scaleX,
-        y: approx.intPtr(i, 0)[1] * scaleY,
-      });
+  function startDetectionLoop() {
+    function loop() {
+      detectCardContour();
+      animationRef.current = requestAnimationFrame(loop);
     }
 
-    if (points.length !== 4) return;
-
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "white";
-    ctx.shadowColor = "rgba(245,158,11,0.85)";
-    ctx.shadowBlur = 16;
-
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-
-    points.slice(1).forEach((point) => {
-      ctx.lineTo(point.x, point.y);
-    });
-
-    ctx.closePath();
-    ctx.stroke();
-
-    ctx.shadowBlur = 0;
+    animationRef.current = requestAnimationFrame(loop);
   }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFolders() {
+      const { data: authData } = await supabase.auth.getUser();
+
+      if (!authData.user) {
+        setFolders([
+          { id: "local-non-classe", name: "Non classé" },
+          { id: "local-commander", name: "Commander" },
+          { id: "local-trade", name: "Trade" },
+          { id: "local-staples", name: "Staples" },
+        ]);
+        return;
+      }
+
+      const { data } = await supabase
+        .from("folders")
+        .select("id,name")
+        .eq("user_id", authData.user.id)
+        .order("created_at", { ascending: true });
+
+      if (!cancelled) {
+        const nextFolders = data?.length
+          ? data
+          : [{ id: "fallback", name: "Non classé" }];
+
+        setFolders(nextFolders);
+        setSelectedFolder(nextFolders[0]?.name || "Non classé");
+      }
+    }
+
+    async function loadOpenCv() {
+      try {
+        const opencvModule = await import("@techstark/opencv-js");
+        const cv = opencvModule.default || opencvModule;
+
+        const ready = () => {
+          if (cancelled) return;
+
+          cvRef.current = cv;
+          setStatus("Place une carte devant la caméra : le contour blanc doit suivre la carte.");
+          startDetectionLoop();
+        };
+
+        if (cv.Mat) {
+          ready();
+        } else {
+          cv.onRuntimeInitialized = ready;
+        }
+      } catch {
+        setStatus("OpenCV indisponible. Vérifie : npm install @techstark/opencv-js");
+      }
+    }
+
+    void loadFolders();
+    void loadOpenCv();
+
+    return () => {
+      cancelled = true;
+
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [supabase]);
 
   function captureCurrentFrame() {
     const image = webcamRef.current?.getScreenshot();
 
     setIsScanning(true);
-    setStatus("Carte capturée. Reconnaissance visuelle à brancher en V2.");
+    setStatus("Carte capturée. La reconnaissance du nom sera branchée ensuite.");
 
     window.setTimeout(() => {
       setScannedCards((current) => [
@@ -246,13 +286,8 @@ export default function ScanPage() {
 
       if (scannedCards.length === 0) return;
 
-      const { data: folders } = await supabase
-        .from("folders")
-        .select("id,name")
-        .eq("user_id", authData.user.id);
-
       const folderId =
-        folders?.find((folder) => folder.name === selectedFolder)?.id || null;
+        folders.find((folder) => folder.name === selectedFolder)?.id || null;
 
       const cardsToInsert = scannedCards.map((card) => ({
         user_id: authData.user!.id,
@@ -298,7 +333,10 @@ export default function ScanPage() {
           className="absolute inset-0 h-full w-full object-cover"
         />
 
-        <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 z-20 h-full w-full" />
+        <canvas
+          ref={overlayRef}
+          className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+        />
 
         <div className="pointer-events-none absolute inset-0 z-10 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_56%,rgba(0,0,0,0.72)_100%)]" />
 
@@ -351,10 +389,11 @@ export default function ScanPage() {
               onChange={(event) => setSelectedFolder(event.target.value)}
               className="max-w-[145px] rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm font-black outline-none"
             >
-              <option>Non classé</option>
-              <option>Commander</option>
-              <option>Trade</option>
-              <option>Staples</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.name}>
+                  {folder.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -389,7 +428,7 @@ export default function ScanPage() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-black">{card.name}</p>
                       <p className="text-xs font-bold text-white/45">
-                        Reconnaissance nom à brancher
+                        Reconnaissance du nom à brancher
                       </p>
                     </div>
 
