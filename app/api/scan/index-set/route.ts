@@ -42,9 +42,9 @@ export async function GET(request: Request) {
 
   const supabase = getSupabaseAdmin();
 
-  let url = `https://api.scryfall.com/cards/search?q=e:${encodeURIComponent(
-    setCode,
-  )}&unique=prints&order=set`;
+let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
+  `set:${setCode}`,
+)}&unique=prints&order=set`;
 
   const indexed = [];
 
