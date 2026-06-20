@@ -13,6 +13,10 @@ export async function createImageHash(imageBuffer: Buffer) {
   return pixels.map((value) => (value >= average ? "1" : "0")).join("");
 }
 
+export function getHashPrefix(hash: string) {
+  return hash.slice(0, 32);
+}
+
 export function hammingDistance(hashA: string, hashB: string) {
   const length = Math.min(hashA.length, hashB.length);
   let distance = 0;

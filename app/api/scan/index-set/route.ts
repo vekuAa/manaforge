@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createImageHash } from "@/lib/imageHash";
+import { createImageHash, getHashPrefix } from "@/lib/imageHash";
+
 
 type ScryfallCard = {
   id: string;
@@ -128,6 +129,7 @@ export async function GET(request: Request) {
                 image,
                 price,
                 hash,
+                hash_prefix: getHashPrefix(hash),
               },
               {
                 onConflict: "scryfall_id",
