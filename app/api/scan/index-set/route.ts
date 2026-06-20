@@ -8,9 +8,18 @@ type ScryfallCard = {
   set: string;
   set_name: string;
   collector_number: string;
-  image_uris?: { normal?: string };
-  card_faces?: { image_uris?: { normal?: string } }[];
-  prices?: { eur?: string | null; usd?: string | null };
+  image_uris?: {
+    normal?: string;
+  };
+  card_faces?: {
+    image_uris?: {
+      normal?: string;
+    };
+  }[];
+  prices?: {
+    eur?: string | null;
+    usd?: string | null;
+  };
 };
 
 function getSupabaseAdmin() {
@@ -35,22 +44,27 @@ function getImage(card: ScryfallCard) {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const setCode = searchParams.get("set")?.trim().toLowerCase();
+
+    const setCode = searchParams
+      .get("set")
+      ?.trim()
+      .toLowerCase();
 
     if (!setCode) {
       return NextResponse.json(
         { error: "Code set manquant." },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     const supabase = getSupabaseAdmin();
 
     let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
-      `e:${setCode}`,
+      `e:${setCode}`
     )}&unique=prints&order=set`;
 
     let indexed = 0;
+    const errors: string[] = [];
 
     while (url) {
       const response = await fetch(url, {
@@ -69,7 +83,7 @@ export async function GET(request: Request) {
             details: errorText,
             url,
           },
-          { status: 404 },
+          { status: 404 }
         );
       }
 
@@ -77,40 +91,78 @@ export async function GET(request: Request) {
       const cards = (data.data || []) as ScryfallCard[];
 
       for (const card of cards) {
-        const image = getImage(card);
-        if (!image) continue;
+        try {
+          const image = getImage(card);
 
-        const imageResponse = await fetch(image);
-        if (!imageResponse.ok) continue;
+          if (!image) continue;
 
-        const buffer = Buffer.from(await imageResponse.arrayBuffer());
-        const hash = await createImageHash(buffer);
-        const price = Number(card.prices?.eur || card.prices?.usd || 0);
+          const imageResponse = await fetch(image);
 
-        const { error } = await supabase.from("card_fingerprints").upsert(
-          {
-            scryfall_id: card.id,
-            name: card.name,
-            set_code: card.set,
-            set_name: card.set_name,
-            collector_number: card.collector_number,
-            image,
-            price,
-            hash,
-          },
-          { onConflict: "scryfall_id" },
-        );
+          if (!imageResponse.ok) {
+            errors.push(`Image introuvable : ${card.name}`);
+            continue;
+          }
 
-        if (!error) indexed += 1;
+          const buffer = Buffer.from(
+            await imageResponse.arrayBuffer()
+          );
+
+          const hash = await createImageHash(buffer);
+
+          const price = Number(
+            card.prices?.eur ||
+              card.prices?.usd ||
+              0
+          );
+
+          const { error } = await supabase
+            .from("card_fingerprints")
+            .upsert(
+              {
+                scryfall_id: card.id,
+                name: card.name,
+                set_code: card.set,
+                set_name: card.set_name,
+                collector_number:
+                  card.collector_number,
+                image,
+                price,
+                hash,
+              },
+              {
+                onConflict: "scryfall_id",
+              }
+            );
+
+          if (error) {
+            errors.push(
+              `${card.name}: ${error.message}`
+            );
+          } else {
+            indexed += 1;
+          }
+        } catch (error) {
+          errors.push(
+            `${card.name}: ${
+              error instanceof Error
+                ? error.message
+                : "Erreur inconnue"
+            }`
+          );
+        }
       }
 
-      url = data.has_more && data.next_page ? data.next_page : "";
+      url =
+        data.has_more && data.next_page
+          ? data.next_page
+          : "";
     }
 
     return NextResponse.json({
       success: true,
       set: setCode,
       indexed,
+      errors: errors.slice(0, 20),
     });
   } catch (error) {
     return NextResponse.json(
@@ -118,9 +170,9 @@ export async function GET(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Erreur indexation scan.",
+            : "Erreur indexation.",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

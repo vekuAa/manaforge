@@ -8,8 +8,7 @@ export async function createImageHash(imageBuffer: Buffer) {
     .toBuffer();
 
   const pixels = Array.from(raw);
-  const average =
-    pixels.reduce((sum, value) => sum + value, 0) / pixels.length;
+  const average = pixels.reduce((sum, value) => sum + value, 0) / pixels.length;
 
   return pixels.map((value) => (value >= average ? "1" : "0")).join("");
 }
@@ -18,8 +17,8 @@ export function hammingDistance(hashA: string, hashB: string) {
   const length = Math.min(hashA.length, hashB.length);
   let distance = 0;
 
-  for (let i = 0; i < length; i += 1) {
-    if (hashA[i] !== hashB[i]) distance += 1;
+  for (let index = 0; index < length; index += 1) {
+    if (hashA[index] !== hashB[index]) distance += 1;
   }
 
   return distance + Math.abs(hashA.length - hashB.length);
