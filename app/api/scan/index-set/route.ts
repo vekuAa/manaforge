@@ -33,45 +33,58 @@ function getImage(card: ScryfallCard) {
 }
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const setCode = searchParams.get("set")?.trim().toLowerCase();
+  try {
+    const { searchParams } = new URL(request.url);
+    const setCode = searchParams.get("set")?.trim().toLowerCase();
 
-  if (!setCode) {
-    return NextResponse.json({ error: "Code set manquant." }, { status: 400 });
-  }
-
-  const supabase = getSupabaseAdmin();
-
-let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
-  `set:${setCode}`,
-)}&unique=prints&order=set`;
-
-  const indexed = [];
-
-  while (url) {
-    const response = await fetch(url);
-
-    if (!response.ok) {
+    if (!setCode) {
       return NextResponse.json(
-        { error: "Set introuvable sur Scryfall." },
-        { status: 404 },
+        { error: "Code set manquant." },
+        { status: 400 },
       );
     }
 
-    const data = await response.json();
-    const cards = (data.data || []) as ScryfallCard[];
+    const supabase = getSupabaseAdmin();
 
-    for (const card of cards) {
-      const image = getImage(card);
-      if (!image) continue;
+    let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
+      `e:${setCode}`,
+    )}&unique=prints&order=set`;
 
-      try {
+    let indexed = 0;
+
+    while (url) {
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "ManaForge/1.0",
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+
+        return NextResponse.json(
+          {
+            error: "Set introuvable sur Scryfall.",
+            details: errorText,
+            url,
+          },
+          { status: 404 },
+        );
+      }
+
+      const data = await response.json();
+      const cards = (data.data || []) as ScryfallCard[];
+
+      for (const card of cards) {
+        const image = getImage(card);
+        if (!image) continue;
+
         const imageResponse = await fetch(image);
-        const arrayBuffer = await imageResponse.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+        if (!imageResponse.ok) continue;
 
+        const buffer = Buffer.from(await imageResponse.arrayBuffer());
         const hash = await createImageHash(buffer);
-
         const price = Number(card.prices?.eur || card.prices?.usd || 0);
 
         const { error } = await supabase.from("card_fingerprints").upsert(
@@ -88,18 +101,26 @@ let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
           { onConflict: "scryfall_id" },
         );
 
-        if (!error) indexed.push(card.name);
-      } catch {
-        // ignore carte ratée
+        if (!error) indexed += 1;
       }
+
+      url = data.has_more && data.next_page ? data.next_page : "";
     }
 
-    url = data.has_more && data.next_page ? data.next_page : "";
+    return NextResponse.json({
+      success: true,
+      set: setCode,
+      indexed,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Erreur indexation scan.",
+      },
+      { status: 500 },
+    );
   }
-
-  return NextResponse.json({
-    success: true,
-    set: setCode,
-    indexed: indexed.length,
-  });
 }
