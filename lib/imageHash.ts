@@ -1,9 +1,30 @@
 import sharp from "sharp";
 
 export async function createImageHash(imageBuffer: Buffer) {
+  const metadata = await sharp(imageBuffer).metadata();
+
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
+
+  if (!width || !height) {
+    throw new Error("Image invalide.");
+  }
+
+  const cropLeft = Math.round(width * 0.08);
+  const cropTop = Math.round(height * 0.18);
+  const cropWidth = Math.round(width * 0.84);
+  const cropHeight = Math.round(height * 0.42);
+
   const raw = await sharp(imageBuffer)
-    .resize(16, 16, { fit: "fill" })
+    .extract({
+      left: cropLeft,
+      top: cropTop,
+      width: cropWidth,
+      height: cropHeight,
+    })
+    .resize(32, 32, { fit: "fill" })
     .grayscale()
+    .normalize()
     .raw()
     .toBuffer();
 
@@ -14,7 +35,7 @@ export async function createImageHash(imageBuffer: Buffer) {
 }
 
 export function getHashPrefix(hash: string) {
-  return hash.slice(0, 32);
+  return hash.slice(0, 64);
 }
 
 export function hammingDistance(hashA: string, hashB: string) {
