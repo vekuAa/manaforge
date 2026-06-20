@@ -63,7 +63,7 @@ export async function POST(request: Request) {
         .select(
           "scryfall_id,name,set_code,set_name,collector_number,image,price,hash,hash_prefix",
         )
-        .limit(5000)
+        .limit(2000000)
         .returns<FingerprintRow[]>();
 
       if (fallback.error) throw fallback.error;
