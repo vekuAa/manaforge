@@ -393,96 +393,137 @@ export default function MarketPage() {
         )}
       </section>
 
-      {isPublishOpen && (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/75 p-4 md:items-center md:justify-center">
-          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-white/10 bg-[#18191f] p-5 shadow-2xl">
-            <h2 className="text-2xl font-black">Publier une carte</h2>
-
-            <p className="mt-2 text-sm font-bold text-white/45">
-              Choisis une carte de ta collection, puis indique le type d’annonce.
-            </p>
-
-            <select
-              value={selectedCardId}
-              onChange={(event) => setSelectedCardId(event.target.value)}
-              className="mt-5 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm font-bold outline-none"
-            >
-              <option value="">Choisir une carte</option>
-              {myCollection.map((card) => (
-                <option key={card.id} value={card.id}>
-                  {card.name} {card.set_code ? `(${card.set_code.toUpperCase()})` : ""}
-                </option>
-              ))}
-            </select>
-
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              <ModalButton
-                active={publishStatus === "sell"}
-                onClick={() => setPublishStatus("sell")}
-              >
-                Vente
-              </ModalButton>
-              <ModalButton
-                active={publishStatus === "trade"}
-                onClick={() => setPublishStatus("trade")}
-              >
-                Échange
-              </ModalButton>
-              <ModalButton
-                active={publishStatus === "want"}
-                onClick={() => setPublishStatus("want")}
-              >
-                Recherche
-              </ModalButton>
-            </div>
-
-            <input
-              value={publishPrice}
-              onChange={(event) => setPublishPrice(event.target.value)}
-              placeholder="Prix demandé, ex : 12,50"
-              inputMode="decimal"
-              className="mt-4 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/35"
-            />
-
-            <select
-              value={publishCondition}
-              onChange={(event) => setPublishCondition(event.target.value)}
-              className="mt-4 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm font-bold outline-none"
-            >
-              <option value="NM">Near Mint</option>
-              <option value="EX">Excellent</option>
-              <option value="GD">Good</option>
-              <option value="LP">Light Played</option>
-              <option value="PL">Played</option>
-              <option value="PO">Poor</option>
-            </select>
-
-            <textarea
-              value={publishNote}
-              onChange={(event) => setPublishNote(event.target.value)}
-              placeholder="Note optionnelle : échange possible, lot, remise en main propre..."
-              className="mt-4 h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/35"
-            />
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => setIsPublishOpen(false)}
-                className="rounded-2xl bg-white/10 px-4 py-4 text-sm font-black text-white"
-              >
-                Annuler
-              </button>
-
-              <button
-                onClick={publishCard}
-                disabled={!selectedCardId || isSaving}
-                className="rounded-2xl bg-[#f59e0b] px-4 py-4 text-sm font-black text-black disabled:opacity-50"
-              >
-                {isSaving ? "Publication..." : "Publier"}
-              </button>
-            </div>
-          </div>
+{isPublishOpen && (
+  <div className="fixed inset-0 z-[80] bg-black/70">
+    <div className="absolute inset-x-0 bottom-0 max-h-[92dvh] rounded-t-[2rem] border-t border-white/10 bg-[#14151a] shadow-2xl md:left-1/2 md:top-1/2 md:bottom-auto md:max-h-[88vh] md:max-w-lg md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[2rem] md:border">
+      <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+        <div>
+          <h2 className="text-xl font-black">Publier une carte</h2>
+          <p className="mt-1 text-xs font-bold text-white/40">
+            Vente, échange ou recherche
+          </p>
         </div>
-      )}
+
+        <button
+          type="button"
+          onClick={() => setIsPublishOpen(false)}
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-lg font-black text-white/70"
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="max-h-[calc(92dvh-156px)] overflow-y-auto px-5 py-4">
+        <label className="text-xs font-black uppercase tracking-[0.18em] text-white/35">
+          Carte
+        </label>
+
+        <select
+          value={selectedCardId}
+          onChange={(event) => setSelectedCardId(event.target.value)}
+          className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none"
+        >
+          <option value="">Choisir une carte</option>
+          {myCollection.map((card) => (
+            <option key={card.id} value={card.id}>
+              {card.name} {card.set_code ? `(${card.set_code.toUpperCase()})` : ""}
+            </option>
+          ))}
+        </select>
+
+        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+          Type d’annonce
+        </label>
+
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <ModalButton
+            active={publishStatus === "sell"}
+            onClick={() => setPublishStatus("sell")}
+          >
+            Vente
+          </ModalButton>
+
+          <ModalButton
+            active={publishStatus === "trade"}
+            onClick={() => setPublishStatus("trade")}
+          >
+            Échange
+          </ModalButton>
+
+          <ModalButton
+            active={publishStatus === "want"}
+            onClick={() => setPublishStatus("want")}
+          >
+            Recherche
+          </ModalButton>
+        </div>
+
+        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+          Prix
+        </label>
+
+        <input
+          value={publishPrice}
+          onChange={(event) => setPublishPrice(event.target.value)}
+          placeholder="Ex : 12,50"
+          inputMode="decimal"
+          className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
+        />
+
+        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+          État
+        </label>
+
+        <select
+          value={publishCondition}
+          onChange={(event) => setPublishCondition(event.target.value)}
+          className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none"
+        >
+          <option value="NM">Near Mint</option>
+          <option value="EX">Excellent</option>
+          <option value="GD">Good</option>
+          <option value="LP">Light Played</option>
+          <option value="PL">Played</option>
+          <option value="PO">Poor</option>
+        </select>
+
+        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+          Note
+        </label>
+
+        <textarea
+          value={publishNote}
+          onChange={(event) => setPublishNote(event.target.value)}
+          placeholder="Ex : remise en main propre, lot possible..."
+          className="mt-2 h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
+        />
+
+        <div className="h-4" />
+      </div>
+
+      <div className="sticky bottom-0 border-t border-white/10 bg-[#14151a] px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setIsPublishOpen(false)}
+            className="rounded-2xl bg-white/10 px-4 py-4 text-sm font-black text-white/70"
+          >
+            Annuler
+          </button>
+
+          <button
+            type="button"
+            onClick={publishCard}
+            disabled={!selectedCardId || isSaving}
+            className="rounded-2xl bg-[#f59e0b] px-4 py-4 text-sm font-black text-black disabled:opacity-40"
+          >
+            {isSaving ? "Publication..." : "Publier"}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
       <BottomNav />
     </main>
@@ -524,8 +565,10 @@ function ModalButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-2xl px-3 py-3 text-xs font-black ${
-        active ? "bg-[#f59e0b] text-black" : "bg-black/30 text-white/60"
+      className={`rounded-2xl border px-3 py-4 text-xs font-black transition ${
+        active
+          ? "border-[#f59e0b] bg-[#f59e0b] text-black"
+          : "border-white/10 bg-black/25 text-white/50"
       }`}
     >
       {children}
