@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import { createClient } from "@/lib/supabase/client";
 
@@ -33,16 +34,8 @@ type Profile = {
 };
 
 function toNumber(value: number | string | null | undefined) {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : 0;
-}
-
-function getQuantity(card: MarketCard) {
-  return Math.max(1, Number(card.quantity || 1));
-}
-
-function getMarketPrice(card: MarketCard) {
-  return toNumber(card.market_price || card.price);
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function formatCurrency(value: number) {
@@ -52,6 +45,14 @@ function formatCurrency(value: number) {
     minimumFractionDigits: value % 1 === 0 ? 0 : 2,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function getQuantity(card: MarketCard) {
+  return Math.max(1, Number(card.quantity || 1));
+}
+
+function getMarketPrice(card: MarketCard) {
+  return toNumber(card.market_price || card.price);
 }
 
 function statusLabel(status: MarketStatus | null) {
@@ -71,17 +72,9 @@ function statusEmoji(status: MarketStatus | null) {
 function priceLabel(card: MarketCard) {
   const price = getMarketPrice(card);
 
-  if (card.market_status === "want" && price <= 0) {
-    return "Prix à discuter";
-  }
-
-  if (card.market_status === "trade" && price <= 0) {
-    return "Échange";
-  }
-
-  if (price <= 0) {
-    return "Prix libre";
-  }
+  if (card.market_status === "want" && price <= 0) return "Prix à discuter";
+  if (card.market_status === "trade" && price <= 0) return "Échange";
+  if (price <= 0) return "Prix libre";
 
   return formatCurrency(price);
 }
@@ -95,6 +88,7 @@ function getProfileInitial(profile?: Profile) {
 }
 
 export default function MarketPage() {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [cards, setCards] = useState<MarketCard[]>([]);
@@ -209,7 +203,8 @@ export default function MarketPage() {
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-black text-[#f59e0b]">
-              {filteredCards.length} résultat{filteredCards.length > 1 ? "s" : ""}
+              {filteredCards.length} résultat
+              {filteredCards.length > 1 ? "s" : ""}
             </div>
           </div>
 
@@ -260,7 +255,8 @@ export default function MarketPage() {
               return (
                 <article
                   key={card.id}
-                  className="rounded-[1.7rem] border border-white/10 bg-white/[0.055] p-3 shadow-xl transition hover:bg-white/[0.08]"
+                  onClick={() => router.push(`/card/${card.id}`)}
+                  className="cursor-pointer rounded-[1.7rem] border border-white/10 bg-white/[0.055] p-3 shadow-xl transition active:scale-[0.98] hover:bg-white/[0.08]"
                 >
                   <div className="flex gap-3">
                     {card.image ? (
@@ -277,7 +273,8 @@ export default function MarketPage() {
 
                     <div className="min-w-0 flex-1">
                       <span className="inline-flex rounded-full bg-[#f59e0b] px-3 py-1 text-[10px] font-black uppercase text-black">
-                        {statusEmoji(card.market_status)} {statusLabel(card.market_status)}
+                        {statusEmoji(card.market_status)}{" "}
+                        {statusLabel(card.market_status)}
                       </span>
 
                       <h2 className="mt-3 line-clamp-2 text-base font-black leading-tight">
