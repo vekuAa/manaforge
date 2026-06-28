@@ -35,6 +35,27 @@ type Profile = {
   avatar_url: string | null;
 };
 
+type ScryfallCard = {
+  id: string;
+  name: string;
+  image_uris?: {
+    normal?: string;
+    small?: string;
+  };
+  card_faces?: {
+    image_uris?: {
+      normal?: string;
+      small?: string;
+    };
+  }[];
+  set_name: string | null;
+  set: string | null;
+  collector_number: string | null;
+  prices?: {
+    eur?: string | null;
+  };
+};
+
 function toNumber(value: number | string | null | undefined) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -76,6 +97,16 @@ function profileName(profile?: Profile) {
   return profile?.display_name || profile?.username || "Joueur";
 }
 
+function getScryfallImage(card: ScryfallCard) {
+  return (
+    card.image_uris?.normal ||
+    card.card_faces?.[0]?.image_uris?.normal ||
+    card.image_uris?.small ||
+    card.card_faces?.[0]?.image_uris?.small ||
+    null
+  );
+}
+
 export default function MarketPage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -95,6 +126,13 @@ export default function MarketPage() {
   const [publishCondition, setPublishCondition] = useState("NM");
   const [publishNote, setPublishNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  const [wantSearch, setWantSearch] = useState("");
+  const [wantResults, setWantResults] = useState<ScryfallCard[]>([]);
+  const [selectedWantCard, setSelectedWantCard] = useState<ScryfallCard | null>(
+    null,
+  );
+  const [isSearchingWant, setIsSearchingWant] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -158,38 +196,113 @@ export default function MarketPage() {
     void loadData();
   }, [loadData]);
 
-  async function publishCard() {
-    if (!selectedCardId) return;
+  async function searchWantCards(query: string) {
+    setWantSearch(query);
+    setSelectedWantCard(null);
 
+    if (query.trim().length < 2) {
+      setWantResults([]);
+      return;
+    }
+
+    setIsSearchingWant(true);
+
+    try {
+      const response = await fetch(
+        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(
+          query,
+        )}&unique=cards&order=name`,
+      );
+
+      const json = await response.json();
+
+      if (!response.ok || !json.data) {
+        setWantResults([]);
+        return;
+      }
+
+      setWantResults(json.data.slice(0, 8));
+    } catch {
+      setWantResults([]);
+    } finally {
+      setIsSearchingWant(false);
+    }
+  }
+
+  function resetPublishForm() {
+    setSelectedCardId("");
+    setSelectedWantCard(null);
+    setWantSearch("");
+    setWantResults([]);
+    setPublishPrice("");
+    setPublishCondition("NM");
+    setPublishNote("");
+  }
+
+  async function publishCard() {
     setIsSaving(true);
 
     const cleanPrice = publishPrice.trim()
       ? Number(publishPrice.replace(",", "."))
       : null;
 
-    const { error } = await supabase
-      .from("collection_cards")
-      .update({
-        market_status: publishStatus,
+    if (publishStatus === "want") {
+      if (!selectedWantCard || !currentUserId) {
+        setIsSaving(false);
+        return;
+      }
+
+      const { error } = await supabase.from("collection_cards").insert({
+        user_id: currentUserId,
+        name: selectedWantCard.name,
+        image: getScryfallImage(selectedWantCard),
+        set_name: selectedWantCard.set_name,
+        set_code: selectedWantCard.set,
+        collector_number: selectedWantCard.collector_number,
+        quantity: 1,
+        price: selectedWantCard.prices?.eur
+          ? Number(selectedWantCard.prices.eur)
+          : 0,
+        language: "fr",
+        foil: false,
+        market_status: "want",
         market_price: Number.isFinite(cleanPrice) ? cleanPrice : null,
         market_condition: publishCondition,
         market_note: publishNote.trim() || null,
-      })
-      .eq("id", selectedCardId);
+      });
 
-    setIsSaving(false);
+      setIsSaving(false);
 
-    if (error) {
-      alert("Erreur pendant la publication.");
-      return;
+      if (error) {
+        alert("Erreur pendant la publication de la recherche.");
+        return;
+      }
+    } else {
+      if (!selectedCardId) {
+        setIsSaving(false);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("collection_cards")
+        .update({
+          market_status: publishStatus,
+          market_price: Number.isFinite(cleanPrice) ? cleanPrice : null,
+          market_condition: publishCondition,
+          market_note: publishNote.trim() || null,
+        })
+        .eq("id", selectedCardId);
+
+      setIsSaving(false);
+
+      if (error) {
+        alert("Erreur pendant la publication.");
+        return;
+      }
     }
 
     setIsPublishOpen(false);
-    setSelectedCardId("");
-    setPublishPrice("");
-    setPublishCondition("NM");
-    setPublishNote("");
-
+    resetPublishForm();
     await loadData();
   }
 
@@ -341,7 +454,8 @@ export default function MarketPage() {
 
                       <div className="min-w-0 flex-1">
                         <span className="inline-flex rounded-full bg-[#f59e0b] px-3 py-1 text-[10px] font-black uppercase text-black">
-                          {statusEmoji(card.market_status)} {statusLabel(card.market_status)}
+                          {statusEmoji(card.market_status)}{" "}
+                          {statusLabel(card.market_status)}
                         </span>
 
                         <h2 className="mt-3 line-clamp-2 text-base font-black leading-tight">
@@ -350,7 +464,9 @@ export default function MarketPage() {
 
                         <p className="mt-1 truncate text-xs font-bold text-white/45">
                           {card.set_code?.toUpperCase() || "SET"}{" "}
-                          {card.collector_number ? `#${card.collector_number}` : ""}
+                          {card.collector_number
+                            ? `#${card.collector_number}`
+                            : ""}
                         </p>
 
                         <p className="mt-2 text-lg font-black text-[#f59e0b]">
@@ -393,137 +509,256 @@ export default function MarketPage() {
         )}
       </section>
 
-{isPublishOpen && (
-  <div className="fixed inset-0 z-[80] bg-black/70">
-    <div className="absolute inset-x-0 bottom-0 max-h-[92dvh] rounded-t-[2rem] border-t border-white/10 bg-[#14151a] shadow-2xl md:left-1/2 md:top-1/2 md:bottom-auto md:max-h-[88vh] md:max-w-lg md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[2rem] md:border">
-      <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-        <div>
-          <h2 className="text-xl font-black">Publier une carte</h2>
-          <p className="mt-1 text-xs font-bold text-white/40">
-            Vente, échange ou recherche
-          </p>
+      {isPublishOpen && (
+        <div className="fixed inset-0 z-[80] bg-black/70">
+          <div className="absolute inset-x-0 bottom-0 max-h-[92dvh] rounded-t-[2rem] border-t border-white/10 bg-[#14151a] shadow-2xl md:left-1/2 md:top-1/2 md:bottom-auto md:max-h-[88vh] md:max-w-lg md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[2rem] md:border">
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <div>
+                <h2 className="text-xl font-black">Publier une carte</h2>
+                <p className="mt-1 text-xs font-bold text-white/40">
+                  Vente, échange ou recherche
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPublishOpen(false);
+                  resetPublishForm();
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-lg font-black text-white/70"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="max-h-[calc(92dvh-156px)] overflow-y-auto px-5 py-4">
+              <label className="text-xs font-black uppercase tracking-[0.18em] text-white/35">
+                Type d’annonce
+              </label>
+
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <ModalButton
+                  active={publishStatus === "sell"}
+                  onClick={() => {
+                    setPublishStatus("sell");
+                    setSelectedWantCard(null);
+                    setWantSearch("");
+                    setWantResults([]);
+                  }}
+                >
+                  Vente
+                </ModalButton>
+
+                <ModalButton
+                  active={publishStatus === "trade"}
+                  onClick={() => {
+                    setPublishStatus("trade");
+                    setSelectedWantCard(null);
+                    setWantSearch("");
+                    setWantResults([]);
+                  }}
+                >
+                  Échange
+                </ModalButton>
+
+                <ModalButton
+                  active={publishStatus === "want"}
+                  onClick={() => {
+                    setPublishStatus("want");
+                    setSelectedCardId("");
+                  }}
+                >
+                  Recherche
+                </ModalButton>
+              </div>
+
+              <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+                Carte
+              </label>
+
+              {publishStatus === "want" ? (
+                <div className="mt-2">
+                  <input
+                    value={wantSearch}
+                    onChange={(event) => searchWantCards(event.target.value)}
+                    placeholder="Rechercher une carte Magic..."
+                    className="w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
+                  />
+
+                  {isSearchingWant && (
+                    <p className="mt-2 text-xs font-bold text-white/40">
+                      Recherche...
+                    </p>
+                  )}
+
+                  {selectedWantCard && (
+                    <div className="mt-3 flex gap-3 rounded-2xl border border-[#f59e0b]/40 bg-[#f59e0b]/10 p-3">
+                      {getScryfallImage(selectedWantCard) ? (
+                        <img
+                          src={getScryfallImage(selectedWantCard) || ""}
+                          alt={selectedWantCard.name}
+                          className="h-16 w-12 shrink-0 rounded-lg object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded-lg bg-white/10">
+                          🎴
+                        </div>
+                      )}
+
+                      <div className="min-w-0">
+                        <p className="line-clamp-1 text-sm font-black text-[#f59e0b]">
+                          {selectedWantCard.name}
+                        </p>
+                        <p className="mt-1 text-xs font-bold text-white/45">
+                          {selectedWantCard.set?.toUpperCase()} #
+                          {selectedWantCard.collector_number}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedWantCard(null);
+                            setWantResults([]);
+                          }}
+                          className="mt-2 text-xs font-black text-white/50"
+                        >
+                          Changer
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {wantResults.length > 0 && !selectedWantCard && (
+                    <div className="mt-3 max-h-72 overflow-y-auto rounded-2xl border border-white/10 bg-black/25">
+                      {wantResults.map((card) => (
+                        <button
+                          key={card.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedWantCard(card);
+                            setWantSearch(card.name);
+                            setWantResults([]);
+                          }}
+                          className="flex w-full gap-3 border-b border-white/10 p-3 text-left last:border-b-0"
+                        >
+                          {getScryfallImage(card) ? (
+                            <img
+                              src={getScryfallImage(card) || ""}
+                              alt={card.name}
+                              className="h-16 w-12 shrink-0 rounded-lg object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded-lg bg-white/10">
+                              🎴
+                            </div>
+                          )}
+
+                          <div className="min-w-0">
+                            <p className="line-clamp-1 text-sm font-black">
+                              {card.name}
+                            </p>
+                            <p className="mt-1 text-xs font-bold text-white/45">
+                              {card.set?.toUpperCase()} #{card.collector_number}
+                            </p>
+                            <p className="mt-1 line-clamp-1 text-xs font-bold text-white/35">
+                              {card.set_name}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <select
+                  value={selectedCardId}
+                  onChange={(event) => setSelectedCardId(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none"
+                >
+                  <option value="">Choisir une carte</option>
+                  {myCollection.map((card) => (
+                    <option key={card.id} value={card.id}>
+                      {card.name}{" "}
+                      {card.set_code ? `(${card.set_code.toUpperCase()})` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+                Prix
+              </label>
+
+              <input
+                value={publishPrice}
+                onChange={(event) => setPublishPrice(event.target.value)}
+                placeholder="Ex : 12,50"
+                inputMode="decimal"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
+              />
+
+              <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+                État
+              </label>
+
+              <select
+                value={publishCondition}
+                onChange={(event) => setPublishCondition(event.target.value)}
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none"
+              >
+                <option value="NM">Near Mint</option>
+                <option value="EX">Excellent</option>
+                <option value="GD">Good</option>
+                <option value="LP">Light Played</option>
+                <option value="PL">Played</option>
+                <option value="PO">Poor</option>
+              </select>
+
+              <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
+                Note
+              </label>
+
+              <textarea
+                value={publishNote}
+                onChange={(event) => setPublishNote(event.target.value)}
+                placeholder="Ex : remise en main propre, lot possible..."
+                className="mt-2 h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
+              />
+
+              <div className="h-4" />
+            </div>
+
+            <div className="sticky bottom-0 border-t border-white/10 bg-[#14151a] px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPublishOpen(false);
+                    resetPublishForm();
+                  }}
+                  className="rounded-2xl bg-white/10 px-4 py-4 text-sm font-black text-white/70"
+                >
+                  Annuler
+                </button>
+
+                <button
+                  type="button"
+                  onClick={publishCard}
+                  disabled={
+                    isSaving ||
+                    (publishStatus === "want"
+                      ? !selectedWantCard
+                      : !selectedCardId)
+                  }
+                  className="rounded-2xl bg-[#f59e0b] px-4 py-4 text-sm font-black text-black disabled:opacity-40"
+                >
+                  {isSaving ? "Publication..." : "Publier"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setIsPublishOpen(false)}
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-lg font-black text-white/70"
-        >
-          ×
-        </button>
-      </div>
-
-      <div className="max-h-[calc(92dvh-156px)] overflow-y-auto px-5 py-4">
-        <label className="text-xs font-black uppercase tracking-[0.18em] text-white/35">
-          Carte
-        </label>
-
-        <select
-          value={selectedCardId}
-          onChange={(event) => setSelectedCardId(event.target.value)}
-          className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none"
-        >
-          <option value="">Choisir une carte</option>
-          {myCollection.map((card) => (
-            <option key={card.id} value={card.id}>
-              {card.name} {card.set_code ? `(${card.set_code.toUpperCase()})` : ""}
-            </option>
-          ))}
-        </select>
-
-        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
-          Type d’annonce
-        </label>
-
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <ModalButton
-            active={publishStatus === "sell"}
-            onClick={() => setPublishStatus("sell")}
-          >
-            Vente
-          </ModalButton>
-
-          <ModalButton
-            active={publishStatus === "trade"}
-            onClick={() => setPublishStatus("trade")}
-          >
-            Échange
-          </ModalButton>
-
-          <ModalButton
-            active={publishStatus === "want"}
-            onClick={() => setPublishStatus("want")}
-          >
-            Recherche
-          </ModalButton>
-        </div>
-
-        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
-          Prix
-        </label>
-
-        <input
-          value={publishPrice}
-          onChange={(event) => setPublishPrice(event.target.value)}
-          placeholder="Ex : 12,50"
-          inputMode="decimal"
-          className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
-        />
-
-        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
-          État
-        </label>
-
-        <select
-          value={publishCondition}
-          onChange={(event) => setPublishCondition(event.target.value)}
-          className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none"
-        >
-          <option value="NM">Near Mint</option>
-          <option value="EX">Excellent</option>
-          <option value="GD">Good</option>
-          <option value="LP">Light Played</option>
-          <option value="PL">Played</option>
-          <option value="PO">Poor</option>
-        </select>
-
-        <label className="mt-5 block text-xs font-black uppercase tracking-[0.18em] text-white/35">
-          Note
-        </label>
-
-        <textarea
-          value={publishNote}
-          onChange={(event) => setPublishNote(event.target.value)}
-          placeholder="Ex : remise en main propre, lot possible..."
-          className="mt-2 h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm font-bold outline-none placeholder:text-white/30"
-        />
-
-        <div className="h-4" />
-      </div>
-
-      <div className="sticky bottom-0 border-t border-white/10 bg-[#14151a] px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => setIsPublishOpen(false)}
-            className="rounded-2xl bg-white/10 px-4 py-4 text-sm font-black text-white/70"
-          >
-            Annuler
-          </button>
-
-          <button
-            type="button"
-            onClick={publishCard}
-            disabled={!selectedCardId || isSaving}
-            className="rounded-2xl bg-[#f59e0b] px-4 py-4 text-sm font-black text-black disabled:opacity-40"
-          >
-            {isSaving ? "Publication..." : "Publier"}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
+      )}
 
       <BottomNav />
     </main>
