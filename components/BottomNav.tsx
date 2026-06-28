@@ -24,7 +24,7 @@ const mainItems = [
 ];
 
 const moreItems = [
-  { href: "/scan", icon: ScanLine, label: "Scan" },
+  //{ href: "/scan", icon: ScanLine, label: "Scan" },
   { href: "/combo", icon: Zap, label: "Combos" },
   { href: "/community", icon: Users, label: "Communauté" },
   { href: "/account", icon: User, label: "Profil" },
