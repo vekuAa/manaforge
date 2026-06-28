@@ -13,6 +13,7 @@ import {
   Zap,
   Dices,
   ScanLine,
+  Store,
 } from "lucide-react";
 
 const mainItems = [
@@ -27,6 +28,7 @@ const moreItems = [
   { href: "/combo", icon: Zap, label: "Combos" },
   { href: "/community", icon: Users, label: "Communauté" },
   { href: "/account", icon: User, label: "Profil" },
+  { href: "/market", icon: Store, label: "Market" },
 ];
 
 export default function BottomNav() {
